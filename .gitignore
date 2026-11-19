@@ -1,0 +1,10 @@
+# Virtual environment & cache
+.venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Arsip & file lokal non-deployment
+archive/
+.DS_Store
+Thumbs.db
