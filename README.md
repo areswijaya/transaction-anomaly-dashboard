@@ -1,6 +1,6 @@
 # Dashboard Segmentasi & Deteksi Anomali Transaksi
 
-[![Streamlit App](https://img.shields.io/badge/Streamlit_App-Live_Demo-FF4B4B?style=flat)](https://your-app-url.streamlit.app)
+[![Streamlit App](https://img.shields.io/badge/Streamlit_App-Live_Demo-FF4B4B?style=flat)](https://transaction-anomaly-dashboard-areswijaya.streamlit.app)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.67%2B-FF4B4B?style=flat)
 ![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-1.9.1-F7931E?style=flat)
