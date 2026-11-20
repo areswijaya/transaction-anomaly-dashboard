@@ -160,7 +160,7 @@ def render_sidebar(df):
     st.session_state.setdefault("filter_location", [])
 
     st.sidebar.header("Filter Data")
-    st.sidebar.caption("Berlaku pada tab Ringkasan, Cluster, dan Risiko.")
+    st.sidebar.caption("Berlaku pada tab Ringkasan, Visualisasi Cluster, dan Transaksi Berisiko.")
 
     selected_occupations = st.sidebar.multiselect(
         "Profesi", options=all_occupations, key="filter_occupation"
