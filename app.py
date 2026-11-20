@@ -747,11 +747,11 @@ def render_tab_eval(df, model):
 
         with eval_vis_col2:
             with st.container(border=True):
-                st.markdown("**Top 10 Feature Importance**")
+                st.markdown("**10 Fitur Paling Berpengaruh**")
                 try:
                     feat_imp = get_feature_importance(model).head(10).iloc[::-1]
                 except Exception as err:
-                    st.info(f"Feature importance tidak tersedia. Detail: {err}")
+                    st.info(f"Data pengaruh fitur tidak tersedia. Detail: {err}")
                 else:
                     fig_imp = px.bar(
                         feat_imp,
@@ -765,7 +765,7 @@ def render_tab_eval(df, model):
                     fig_imp.update_traces(marker_cornerradius=4)
                     fig_imp.update_layout(
                         coloraxis_showscale=False,
-                        xaxis_title="Importance",
+                        xaxis_title="Tingkat Pengaruh",
                         yaxis_title="",
                         margin=dict(t=20, b=20, l=20, r=20),
                         height=360,
