@@ -17,105 +17,30 @@ CLUSTERING_FEATURES = [
     "Balance_Ratio",
 ]
 
-ANOMALY_FEATURES = [
-    "TransactionAmount",
-    "CustomerAge",
-    "TransactionDuration",
-    "LoginAttempts",
-    "AccountBalance",
-    "Balance_Ratio",
-    "Days_Since_Prev_Tx",
-    "Amount_Per_Second",
-]
-
-CLUSTER_LABELS = {
-    0: "0 - Nasabah Muda Aktif",
-    1: "1 - Nasabah Mapan Konservatif",
+SEGMENT_COLORS = {
+    "Nasabah Muda Aktif": "#B45309",
+    "Nasabah Mapan Konservatif": "#1D4ED8",
 }
 
-CLUSTER_COLORS = {
-    "0 - Nasabah Muda Aktif": "#B45309",
-    "1 - Nasabah Mapan Konservatif": "#1D4ED8",
+SEGMENT_ACTIONS = {
+    "Nasabah Muda Aktif": "Tawarkan fitur auto-debit, batas anggaran, atau promo cashback.",
+    "Nasabah Mapan Konservatif": "Tawarkan deposito, obligasi, atau reksa dana risiko rendah.",
 }
 
-CLUSTER_GRADIENTS = {
-    "blue": ["#DBEAFE", "#60A5FA", "#1D4ED8"],
-    "red": ["#FEE2E2", "#F87171", "#B91C1C"],
+ANOMALY_COLORS = {
+    True: "#B91C1C",
+    False: "#64748B",
 }
 
-CLUSTER_RECOMMENDATIONS = {
-    0: (
-        "Profil transaksi aktif dengan porsi penarikan tinggi terhadap saldo. "
-        "Pertimbangkan fitur auto-debit, batas anggaran, atau promo cashback."
-    ),
-    1: (
-        "Profil saldo tinggi dan transaksi konservatif. "
-        "Pertimbangkan produk deposito, obligasi, atau reksa dana risiko rendah."
-    ),
-}
-
-K_EVALUATION_FALLBACK = pd.DataFrame({
-    "k": [2, 3, 4, 5, 6, 7, 8],
-    "Inertia": [9813.20, 8156.22, 7027.95, 6061.49, 5265.85, 4759.72, 4368.32],
-    "Silhouette Score": [0.2634, 0.2339, 0.2342, 0.2380, 0.2531, 0.2567, 0.2328],
-})
-
-
-@st.cache_data
-def load_k_evaluation():
-    """Baca hasil Elbow/Silhouette dari notebook (models/k_evaluation.csv); fallback ke nilai statis."""
-    path = BASE_DIR / "models" / "k_evaluation.csv"
-    try:
-        evaluation = pd.read_csv(path)
-        required = {"k", "Inertia", "Silhouette Score"}
-        if required.issubset(evaluation.columns) and not evaluation.empty:
-            return evaluation[["k", "Inertia", "Silhouette Score"]]
-    except (FileNotFoundError, pd.errors.ParserError, pd.errors.EmptyDataError):
-        pass
-    return K_EVALUATION_FALLBACK
-
+CLUSTER_GRADIENTS_BLUE = ["#DBEAFE", "#60A5FA", "#1D4ED8"]
 
 PRESET_SCENARIOS = {
-    "Manual / Kustom": {
-        "TransactionAmount": 250.0,
-        "AccountBalance": 5000.0,
-        "TransactionDuration": 110,
-        "CustomerAge": 35,
-        "LoginAttempts": 1,
-        "Days_Since_Prev_Tx": 485.0,
-    },
-    "Contoh 1: Nasabah Muda Aktif (Normal)": {
-        "TransactionAmount": 350.0,
-        "AccountBalance": 1200.0,
-        "TransactionDuration": 120,
-        "CustomerAge": 25,
-        "LoginAttempts": 1,
-        "Days_Since_Prev_Tx": 460.0,
-    },
-    "Contoh 2: Nasabah Mapan Konservatif (Normal)": {
-        "TransactionAmount": 250.0,
-        "AccountBalance": 7500.0,
-        "TransactionDuration": 115,
-        "CustomerAge": 56,
-        "LoginAttempts": 1,
-        "Days_Since_Prev_Tx": 490.0,
-    },
-    "Contoh 3: Anomali Multivariat (Nominal & Rasio Ekstrem)": {
-        "TransactionAmount": 1450.0,
-        "AccountBalance": 800.0,
-        "TransactionDuration": 35,
-        "CustomerAge": 40,
-        "LoginAttempts": 4,
-        "Days_Since_Prev_Tx": 320.0,
-    },
+    "Isi sendiri": {"amount": 250.0, "balance": 5000.0, "duration": 110, "age": 35, "login": 1},
+    "Nasabah muda, normal": {"amount": 350.0, "balance": 1200.0, "duration": 120, "age": 25, "login": 1},
+    "Nasabah mapan, normal": {"amount": 250.0, "balance": 7500.0, "duration": 115, "age": 56, "login": 1},
+    "Nominal besar, saldo kecil": {"amount": 1450.0, "balance": 800.0, "duration": 35, "age": 40, "login": 1},
+    "Login berulang": {"amount": 310.0, "balance": 5200.0, "duration": 140, "age": 45, "login": 4},
 }
-
-
-def _minmax_scale(val, bounds):
-    lo, hi = bounds
-    if hi <= lo:
-        return 0.0
-    return float(np.clip((val - lo) / (hi - lo), 0.0, 1.0)) * 100.0
 
 
 def _style_chart(fig, height=360, show_legend=True):
@@ -144,7 +69,6 @@ def _style_chart(fig, height=360, show_legend=True):
 @st.cache_data
 def load_data():
     data = pd.read_csv(BASE_DIR / "data" / "data_clustering_clean.csv")
-    data["Segment_Name"] = data["Cluster"].map(CLUSTER_LABELS)
     data["High_Login_Risk"] = data["LoginAttempts"] >= LOGIN_RISK_THRESHOLD
     return data
 
@@ -153,8 +77,21 @@ def load_data():
 def load_models():
     scaler_km = joblib.load(BASE_DIR / "models" / "scaler_clustering.joblib")
     kmeans = joblib.load(BASE_DIR / "models" / "kmeans_model.joblib")
-    anomaly_bundle = joblib.load(BASE_DIR / "models" / "anomaly_bundle.joblib")
-    return scaler_km, kmeans, anomaly_bundle
+    anomaly = joblib.load(BASE_DIR / "models" / "anomaly_model.joblib")
+    return scaler_km, kmeans, anomaly
+
+
+@st.cache_data
+def load_k_evaluation():
+    path = BASE_DIR / "models" / "k_evaluation.csv"
+    try:
+        evaluation = pd.read_csv(path)
+        required = {"k", "Inertia", "Silhouette Score"}
+        if required.issubset(evaluation.columns) and not evaluation.empty:
+            return evaluation[["k", "Inertia", "Silhouette Score"]]
+    except (FileNotFoundError, pd.errors.EmptyDataError, pd.errors.ParserError):
+        pass
+    return None
 
 
 @st.cache_data
@@ -162,850 +99,67 @@ def get_feature_bounds(_df):
     return _df[CLUSTERING_FEATURES].min(), _df[CLUSTERING_FEATURES].max()
 
 
+def get_segment_map(df):
+    """Peta nomor cluster ke nama segmen, diambil dari data hasil notebook."""
+    return df.groupby("Cluster")["Segment_Name"].first().to_dict()
+
+
 def predict_transaction(
-    tx_amount,
-    acc_balance,
-    tx_duration,
-    cust_age,
+    amount,
+    balance,
+    duration,
+    age,
     login_attempts,
-    days_since_prev_tx,
     scaler_km,
     kmeans,
-    anomaly_bundle,
+    anomaly,
+    segment_map,
 ):
-    """Map one transaction to a K-Means segment, 3-model anomaly score (0-100), and login rule."""
-    balance_ratio = float(tx_amount / acc_balance) if acc_balance > 0 else 0.0
-    amount_per_second = float(tx_amount / max(tx_duration, 1))
+    """Petakan satu transaksi ke segmen K-Means, skor anomali 0-100, dan aturan login."""
+    balance_ratio = float(amount / balance) if balance > 0 else 0.0
+    amount_per_second = float(amount / max(duration, 1))
 
-    km_df = pd.DataFrame([{
-        "TransactionAmount": float(tx_amount),
-        "CustomerAge": float(cust_age),
-        "TransactionDuration": float(tx_duration),
-        "AccountBalance": float(acc_balance),
+    km_row = pd.DataFrame([{
+        "TransactionAmount": float(amount),
+        "CustomerAge": float(age),
+        "TransactionDuration": float(duration),
+        "AccountBalance": float(balance),
         "Balance_Ratio": balance_ratio,
     }])[CLUSTERING_FEATURES]
+    km_scaled = pd.DataFrame(scaler_km.transform(km_row), columns=CLUSTERING_FEATURES)
+    cluster = int(kmeans.predict(km_scaled)[0])
 
-    km_scaled = scaler_km.transform(km_df)
-    # K-Means was fitted with column names; wrapping avoids sklearn feature-name warnings.
-    km_scaled_df = pd.DataFrame(km_scaled, columns=CLUSTERING_FEATURES)
-    cluster = int(kmeans.predict(km_scaled_df)[0])
-    centroid_distances = {
-        CLUSTER_LABELS[i]: float(np.linalg.norm(km_scaled[0] - center))
-        for i, center in enumerate(kmeans.cluster_centers_)
-    }
-
-    anom_df = pd.DataFrame([{
-        "TransactionAmount": float(tx_amount),
-        "CustomerAge": float(cust_age),
-        "TransactionDuration": float(tx_duration),
-        "LoginAttempts": float(login_attempts),
-        "AccountBalance": float(acc_balance),
+    an_row = pd.DataFrame([{
+        "TransactionAmount": float(amount),
+        "CustomerAge": float(age),
+        "TransactionDuration": float(duration),
+        "AccountBalance": float(balance),
         "Balance_Ratio": balance_ratio,
-        "Days_Since_Prev_Tx": float(days_since_prev_tx),
         "Amount_Per_Second": amount_per_second,
-    }])[anomaly_bundle["features"]]
+    }])[anomaly["features"]]
+    an_scaled = anomaly["scaler"].transform(an_row)
 
-    anom_scaled = anomaly_bundle["scaler"].transform(anom_df)
-
-    iso_flag = bool(anomaly_bundle["iso"].predict(anom_scaled)[0] == -1)
-    lof_flag = bool(anomaly_bundle["lof"].predict(anom_scaled)[0] == -1)
-    pca_rec = anomaly_bundle["pca"].inverse_transform(
-        anomaly_bundle["pca"].transform(anom_scaled)
-    )
-    pca_raw = float(np.mean((anom_scaled - pca_rec) ** 2))
-    pca_flag = bool(pca_raw >= anomaly_bundle["pca_threshold"])
-
-    iso_raw = float(-anomaly_bundle["iso"].decision_function(anom_scaled)[0])
-    lof_raw = float(-anomaly_bundle["lof"].decision_function(anom_scaled)[0])
-
-    bounds = anomaly_bundle["score_bounds"]
-    model_scores = {
-        "Isolation Forest": round(_minmax_scale(iso_raw, bounds["iso"]), 2),
-        "Local Outlier Factor": round(_minmax_scale(lof_raw, bounds["lof"]), 2),
-        "PCA Reconstruction": round(_minmax_scale(pca_raw, bounds["pca"]), 2),
-    }
-    anomaly_score = round(sum(model_scores.values()) / 3.0, 2)
-    anomaly_votes = int(iso_flag) + int(lof_flag) + int(pca_flag)
+    raw = float(-anomaly["model"].decision_function(an_scaled)[0])
+    lo, hi = anomaly["score_bounds"]
+    score = 0.0 if hi <= lo else float(np.clip((raw - lo) / (hi - lo), 0.0, 1.0)) * 100.0
+    # Isolation Forest menandai anomali saat -decision_function(x) > 0; konversi 0.0 ke skala 0-100.
+    thresh = 0.0 if hi <= lo else float(np.clip((0.0 - lo) / (hi - lo), 0.0, 1.0)) * 100.0
+    is_anomaly = bool(anomaly["model"].predict(an_scaled)[0] == -1)
 
     return {
-        "cluster": cluster,
-        "segment_name": CLUSTER_LABELS[cluster],
-        "is_high_login_risk": bool(login_attempts >= LOGIN_RISK_THRESHOLD),
+        "segment": segment_map.get(cluster, f"Cluster {cluster}"),
         "balance_ratio": balance_ratio,
         "amount_per_second": amount_per_second,
-        "centroid_distances": centroid_distances,
-        "anomaly_score": anomaly_score,
-        "anomaly_votes": anomaly_votes,
-        "model_flags": {
-            "Isolation Forest": iso_flag,
-            "Local Outlier Factor": lof_flag,
-            "PCA Reconstruction": pca_flag,
-        },
-        "model_scores": model_scores,
+        "anomaly_score": round(score, 2),
+        "threshold_score": round(thresh, 2),
+        "is_anomaly": is_anomaly,
+        "is_high_login_risk": bool(login_attempts >= LOGIN_RISK_THRESHOLD),
     }
 
 
-def reset_filters(all_occupations, all_channels, all_types):
-    st.session_state["filter_occupation"] = all_occupations
-    st.session_state["filter_channel"] = all_channels
-    st.session_state["filter_type"] = all_types
-    st.session_state["filter_location"] = []
-
-
-def render_sidebar(df):
-    all_occupations = sorted(df["CustomerOccupation"].unique())
-    all_channels = sorted(df["Channel"].unique())
-    all_types = sorted(df["TransactionType"].unique())
-    all_locations = sorted(df["Location"].unique())
-
-    st.session_state.setdefault("filter_occupation", all_occupations)
-    st.session_state.setdefault("filter_channel", all_channels)
-    st.session_state.setdefault("filter_type", all_types)
-    st.session_state.setdefault("filter_location", [])
-
-    st.sidebar.header("Filter Data")
-    st.sidebar.caption(
-        "Berlaku pada tab Ringkasan, Visualisasi Cluster, dan Deteksi Anomali."
-    )
-
-    selected_occupations = st.sidebar.multiselect(
-        "Profesi", options=all_occupations, key="filter_occupation"
-    )
-    selected_channels = st.sidebar.multiselect(
-        "Kanal", options=all_channels, key="filter_channel"
-    )
-    selected_types = st.sidebar.multiselect(
-        "Tipe Transaksi", options=all_types, key="filter_type"
-    )
-    selected_locations = st.sidebar.multiselect(
-        "Kota (kosong = semua)", options=all_locations, key="filter_location"
-    )
-
-    st.sidebar.button(
-        "Reset Filter",
-        on_click=reset_filters,
-        args=(all_occupations, all_channels, all_types),
-        key="reset_filters_btn",
-        width="stretch",
-    )
-
-    filtered_df = df[
-        df["CustomerOccupation"].isin(selected_occupations)
-        & df["Channel"].isin(selected_channels)
-        & df["TransactionType"].isin(selected_types)
-    ]
-    if selected_locations:
-        filtered_df = filtered_df[filtered_df["Location"].isin(selected_locations)]
-
-    st.sidebar.markdown(
-        f'<div class="filter-status-box">Menampilkan <b>{len(filtered_df):,}</b> '
-        f'dari <b>{len(df):,}</b> transaksi</div>',
-        unsafe_allow_html=True,
-    )
-    st.sidebar.markdown(
-        """
-<div class="author-card">
-<div class="author-label">Dibuat oleh</div>
-<div class="author-name">Ilfa Antaries Yusuf Wijaya</div>
-<div class="author-links">
-<a href="mailto:contact.areswijaya@gmail.com" target="_blank" rel="noopener noreferrer">Email</a>
-<a href="https://www.linkedin.com/in/areswijaya" target="_blank" rel="noopener noreferrer">LinkedIn</a>
-<a href="https://github.com/areswijaya" target="_blank" rel="noopener noreferrer">GitHub</a>
-</div>
-</div>
-        """,
-        unsafe_allow_html=True,
-    )
-    return filtered_df
-
-
-def build_summary_table(filtered_df):
-    total_tx = len(filtered_df)
-    summary = (
-        filtered_df.groupby("Segment_Name")
-        .agg(
-            Jumlah_Transaksi=("Cluster", "count"),
-            Rata_Transaksi_USD=("TransactionAmount", "mean"),
-            Rata_Saldo_USD=("AccountBalance", "mean"),
-            Rata_Usia=("CustomerAge", "mean"),
-            Rata_Balance_Ratio=("Balance_Ratio", "mean"),
-            Rata_Skor_Anomali=("Anomaly_Score", "mean"),
-        )
-        .reindex(list(CLUSTER_COLORS.keys()), fill_value=0)
-        .rename_axis("Segment_Name")
-        .reset_index()
-    )
-    summary["Persentase (%)"] = (
-        (summary["Jumlah_Transaksi"] / total_tx) * 100 if total_tx > 0 else 0.0
-    )
-    return summary
-
-
-def render_tab_summary(filtered_df):
-    st.subheader("Ringkasan Utama")
-
-    total_tx = len(filtered_df)
-    avg_amount = filtered_df["TransactionAmount"].mean()
-    consensus_tx = int((filtered_df["Anomaly_Votes"] >= 2).sum())
-    consensus_pct = (consensus_tx / total_tx) * 100 if total_tx > 0 else 0.0
-    risk_tx = int(filtered_df["High_Login_Risk"].sum())
-    risk_pct = (risk_tx / total_tx) * 100 if total_tx > 0 else 0.0
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        with st.container(border=True, key="card_sum_total"):
-            st.metric("Total Transaksi", f"{total_tx:,}")
-    with col2:
-        with st.container(border=True, key="card_sum_avg"):
-            st.metric("Rata-Rata Transaksi", f"${avg_amount:,.2f}")
-    with col3:
-        with st.container(border=True, key="card_sum_anom"):
-            st.metric("Anomali Konsensus (>= 2 model)", f"{consensus_tx:,} ({consensus_pct:.2f}%)")
-    with col4:
-        with st.container(border=True, key="card_sum_risk"):
-            st.metric("Risiko Login (LoginAttempts >= 3)", f"{risk_tx:,} ({risk_pct:.2f}%)")
-
-    summary_table = build_summary_table(filtered_df)
-    chart_col1, chart_col2 = st.columns([1.05, 1.35])
-
-    with chart_col1:
-        with st.container(border=True, key="card_sum_dist"):
-            st.markdown("**Jumlah transaksi per segmen perilaku**")
-            fig_dist = px.bar(
-                summary_table,
-                x="Segment_Name",
-                y="Jumlah_Transaksi",
-                color="Segment_Name",
-                color_discrete_map=CLUSTER_COLORS,
-                category_orders={"Segment_Name": list(CLUSTER_COLORS.keys())},
-                text="Jumlah_Transaksi",
-                template="plotly_white",
-            )
-            fig_dist.update_traces(textposition="outside", marker_cornerradius=4, cliponaxis=False)
-            fig_dist.update_layout(
-                yaxis_title="Jumlah Transaksi",
-                xaxis_title="",
-                margin=dict(t=25, b=20, l=20, r=20),
-            )
-            _style_chart(fig_dist, height=370, show_legend=False)
-            st.plotly_chart(fig_dist, width="stretch")
-
-    with chart_col2:
-        with st.container(border=True, key="card_sum_cat"):
-            top_col1, top_col2 = st.columns([1.5, 1])
-            with top_col1:
-                st.markdown("**Proporsi segmen pada tiap kategori (%)**")
-            with top_col2:
-                breakdown_by = st.selectbox(
-                    "Kategori",
-                    options=["CustomerOccupation", "Channel", "TransactionType"],
-                    key="summary_breakdown_by",
-                    label_visibility="collapsed",
-                )
-
-            breakdown = (
-                filtered_df.groupby([breakdown_by, "Segment_Name"]).size().reset_index(name="Jumlah")
-            )
-            breakdown["Persentase (%)"] = (
-                breakdown["Jumlah"] / breakdown.groupby(breakdown_by)["Jumlah"].transform("sum") * 100
-            )
-            fig_breakdown = px.bar(
-                breakdown,
-                x=breakdown_by,
-                y="Persentase (%)",
-                color="Segment_Name",
-                color_discrete_map=CLUSTER_COLORS,
-                category_orders={"Segment_Name": list(CLUSTER_COLORS.keys())},
-                template="plotly_white",
-            )
-            fig_breakdown.update_traces(marker_cornerradius=4)
-            fig_breakdown.update_layout(
-                legend_title_text="Segmen",
-                yaxis_title="Persentase (%)",
-                xaxis_title=breakdown_by,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                margin=dict(t=40, b=20, l=20, r=20),
-            )
-            _style_chart(fig_breakdown, height=330, show_legend=True)
-            st.plotly_chart(fig_breakdown, width="stretch")
-
-    summary_display = summary_table.rename(columns={
-        "Segment_Name": "Segmen",
-        "Jumlah_Transaksi": "Jumlah",
-        "Persentase (%)": "Persentase (%)",
-        "Rata_Transaksi_USD": "Transaksi ($)",
-        "Rata_Saldo_USD": "Saldo ($)",
-        "Rata_Usia": "Usia (Thn)",
-        "Rata_Balance_Ratio": "Balance Ratio",
-        "Rata_Skor_Anomali": "Skor Anomali",
-    })
-
-    with st.container(border=True, key="card_sum_table"):
-        st.markdown("**Profil rata-rata per segmen**")
-        st.dataframe(summary_display.round(2), width="stretch", hide_index=True)
-
-
-def render_tab_cluster(filtered_df, df):
-    st.subheader("Visualisasi & Profil Cluster (K-Means, k = 2)")
-
-    vis_col1, vis_col2 = st.columns([1.15, 1])
-
-    with vis_col1:
-        with st.container(border=True, key="card_cluster_scatter"):
-            st.markdown("**Sebaran antarfitur transaksi**")
-            plot_features = CLUSTERING_FEATURES + [
-                "Amount_Per_Second",
-                "Days_Since_Prev_Tx",
-                "Anomaly_Score",
-            ]
-            axis_col1, axis_col2 = st.columns(2)
-            x_axis = axis_col1.selectbox(
-                "Sumbu X",
-                options=plot_features,
-                index=plot_features.index("AccountBalance"),
-                key="cluster_x_axis",
-            )
-            y_axis = axis_col2.selectbox(
-                "Sumbu Y",
-                options=plot_features,
-                index=plot_features.index("TransactionAmount"),
-                key="cluster_y_axis",
-            )
-
-            scatter_df = filtered_df.sort_values("Anomaly_Votes")
-            fig_scatter = px.scatter(
-                scatter_df,
-                x=x_axis,
-                y=y_axis,
-                color="Segment_Name",
-                color_discrete_map=CLUSTER_COLORS,
-                category_orders={"Segment_Name": list(CLUSTER_COLORS.keys())},
-                hover_data=ANOMALY_FEATURES + ["Anomaly_Score", "Anomaly_Votes"],
-                opacity=0.82,
-                template="plotly_white",
-            )
-            fig_scatter.update_traces(
-                marker=dict(size=7.5, line=dict(width=0.5, color="#FFFFFF"))
-            )
-            fig_scatter.update_layout(
-                legend_title_text="Segmen",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-                margin=dict(t=40, b=20, l=20, r=20),
-            )
-            _style_chart(fig_scatter, height=440, show_legend=True)
-            st.plotly_chart(fig_scatter, width="stretch")
-
-    with vis_col2:
-        with st.container(border=True, key="card_cluster_radar"):
-            st.markdown("**Perbandingan 5 fitur perilaku per segmen (skala 0-1)**")
-            feat_min, feat_max = get_feature_bounds(df)
-            segment_means = filtered_df.groupby("Segment_Name")[CLUSTERING_FEATURES].mean()
-            segment_norm = (segment_means - feat_min) / (feat_max - feat_min)
-            radar_data = segment_norm.reset_index().melt(
-                id_vars="Segment_Name", var_name="Fitur", value_name="Nilai Normalisasi"
-            )
-
-            fig_radar = px.line_polar(
-                radar_data,
-                r="Nilai Normalisasi",
-                theta="Fitur",
-                color="Segment_Name",
-                line_close=True,
-                color_discrete_map=CLUSTER_COLORS,
-                category_orders={"Segment_Name": list(CLUSTER_COLORS.keys())},
-                template="plotly_white",
-            )
-            fig_radar.update_traces(fill="toself", opacity=0.26, line=dict(width=2.5))
-            fig_radar.update_layout(
-                legend_title_text="Segmen",
-                legend=dict(orientation="h", yanchor="bottom", y=-0.22, xanchor="center", x=0.5),
-                margin=dict(t=40, b=70, l=65, r=65),
-                polar=dict(
-                    domain=dict(x=[0.16, 0.84], y=[0.16, 0.86]),
-                    bgcolor="#FFFFFF",
-                    radialaxis=dict(
-                        gridcolor="#CBD5E1",
-                        linecolor="#CBD5E1",
-                        tickfont=dict(size=11, color="#0F172A"),
-                    ),
-                    angularaxis=dict(
-                        gridcolor="#CBD5E1",
-                        linecolor="#CBD5E1",
-                        tickfont=dict(size=12, color="#0F172A"),
-                    ),
-                ),
-            )
-            _style_chart(fig_radar, height=490, show_legend=True)
-            st.plotly_chart(fig_radar, width="stretch")
-
-    st.markdown("**Profil & Rekomendasi Segmen (Data Keseluruhan)**")
-    seg_means = df.groupby("Cluster")[[
-        "CustomerAge",
-        "AccountBalance",
-        "TransactionAmount",
-        "Balance_Ratio",
-    ]].mean()
-    seg_counts = df["Cluster"].value_counts()
-    seg_modes = df.groupby("Cluster")["CustomerOccupation"].agg(lambda x: x.mode()[0])
-
-    seg_cols = st.columns(2)
-    for cid, col in zip([0, 1], seg_cols):
-        label = CLUSTER_LABELS[cid]
-        color = CLUSTER_COLORS[label]
-        count = int(seg_counts.get(cid, 0))
-        pct = (count / len(df)) * 100 if len(df) > 0 else 0.0
-        row = seg_means.loc[cid]
-        occ = seg_modes.loc[cid]
-        with col:
-            with st.container(border=True, key=f"card_seg_{cid}"):
-                st.markdown(
-                    f'<div class="segment-card-head" style="color: {color};">'
-                    f'{label}</div>'
-                    f'<div class="segment-card-sub">{count:,} transaksi ({pct:.2f}%), dominan {occ}</div>',
-                    unsafe_allow_html=True,
-                )
-                m1, m2 = st.columns(2)
-                m1.metric("Usia Rata-Rata", f"{row['CustomerAge']:.2f} thn")
-                m2.metric("Saldo Rata-Rata", f"${row['AccountBalance']:,.2f}")
-                m3, m4 = st.columns(2)
-                m3.metric("Transaksi Rata-Rata", f"${row['TransactionAmount']:,.2f}")
-                m4.metric("Balance Ratio", f"{row['Balance_Ratio']:.2f}")
-                st.info(f"Tindakan: {CLUSTER_RECOMMENDATIONS[cid]}")
-
-
-def render_tab_anomaly(filtered_df):
-    st.subheader("Deteksi Anomali Multivariat (Ensemble 3 Model + Risiko Login)")
-    st.caption(
-        "Menggabungkan Isolation Forest, Local Outlier Factor, dan PCA Reconstruction Error "
-        "pada 8 fitur (termasuk Days_Since_Prev_Tx dan Amount_Per_Second), tanpa label fraud asli. "
-        "Hasilnya penanda kandidat untuk ditinjau, bukan vonis fraud."
-    )
-
-    filter_mode = st.selectbox(
-        "Filter Transaksi Anomali",
-        options=[
-            "Anomali Konsensus (>= 2 model)",
-            "Konsensus Penuh (3 model)",
-            "Semua Flag (>= 1 model)",
-            "Risiko Login (LoginAttempts >= 3)",
-        ],
-        key="anomaly_filter_mode",
-    )
-
-    if filter_mode == "Konsensus Penuh (3 model)":
-        anom_df = filtered_df[filtered_df["Anomaly_Votes"] == 3]
-    elif filter_mode == "Semua Flag (>= 1 model)":
-        anom_df = filtered_df[filtered_df["Anomaly_Votes"] >= 1]
-    elif filter_mode == "Risiko Login (LoginAttempts >= 3)":
-        anom_df = filtered_df[filtered_df["High_Login_Risk"]]
-    else:
-        anom_df = filtered_df[filtered_df["Anomaly_Votes"] >= 2]
-
-    anom_df = anom_df.sort_values("Anomaly_Score", ascending=False)
-
-    total_filtered = len(filtered_df)
-    anom_pct = (len(anom_df) / total_filtered) * 100 if total_filtered > 0 else 0.0
-    max_score = float(anom_df["Anomaly_Score"].max()) if not anom_df.empty else 0.0
-    mean_amt = float(anom_df["TransactionAmount"].mean()) if not anom_df.empty else 0.0
-
-    kpi1, kpi2, kpi3 = st.columns(3)
-    with kpi1:
-        with st.container(border=True, key="card_anom_count"):
-            st.metric("Transaksi Terfilter", f"{len(anom_df):,} ({anom_pct:.2f}%)")
-    with kpi2:
-        with st.container(border=True, key="card_anom_max"):
-            st.metric("Skor Anomali Tertinggi", f"{max_score:.2f}")
-    with kpi3:
-        with st.container(border=True, key="card_anom_avg"):
-            st.metric("Rata-Rata Nominal Terfilter", f"${mean_amt:,.2f}")
-
-    vis_col1, vis_col2 = st.columns([1.3, 1])
-    with vis_col1:
-        with st.container(border=True, key="card_anom_hist"):
-            st.markdown("**Sebaran skor anomali gabungan (0-100)**")
-            fig_hist = px.histogram(
-                filtered_df,
-                x="Anomaly_Score",
-                color=filtered_df["Anomaly_Votes"].astype(str),
-                nbins=30,
-                template="plotly_white",
-                labels={"color": "Jumlah Model Flag"},
-            )
-            fig_hist.update_layout(
-                yaxis_title="Jumlah Transaksi",
-                xaxis_title="Skor Anomali Gabungan (0-100)",
-                margin=dict(t=25, b=20, l=20, r=20),
-            )
-            _style_chart(fig_hist, height=360, show_legend=True)
-            st.plotly_chart(fig_hist, width="stretch")
-
-    with vis_col2:
-        with st.container(border=True, key="card_anom_bar"):
-            st.markdown("**Jumlah temuan anomali per metode**")
-            counts_df = pd.DataFrame({
-                "Metode": [
-                    "Isolation Forest (5%)",
-                    "Local Outlier Factor (5%)",
-                    "PCA Reconstruction (5%)",
-                    "Anomali Konsensus (>= 2 model)",
-                    "Risiko Login (>= 3)",
-                ],
-                "Jumlah": [
-                    int(filtered_df["ISO_Flag"].sum()),
-                    int(filtered_df["LOF_Flag"].sum()),
-                    int(filtered_df["PCA_Flag"].sum()),
-                    int((filtered_df["Anomaly_Votes"] >= 2).sum()),
-                    int(filtered_df["High_Login_Risk"].sum()),
-                ],
-            })
-            fig_bar = px.bar(
-                counts_df,
-                x="Metode",
-                y="Jumlah",
-                text="Jumlah",
-                color="Jumlah",
-                color_continuous_scale=CLUSTER_GRADIENTS["red"],
-                template="plotly_white",
-            )
-            fig_bar.update_traces(textposition="outside", marker_cornerradius=4, cliponaxis=False)
-            fig_bar.update_layout(
-                coloraxis_showscale=False,
-                yaxis_title="Jumlah Transaksi",
-                xaxis_title="",
-                margin=dict(t=25, b=20, l=20, r=20),
-            )
-            _style_chart(fig_bar, height=360, show_legend=False)
-            st.plotly_chart(fig_bar, width="stretch")
-
-    display_cols = [
-        "Anomaly_Score",
-        "Anomaly_Votes",
-        "High_Login_Risk",
-        "Segment_Name",
-        "TransactionAmount",
-        "AccountBalance",
-        "Balance_Ratio",
-        "Amount_Per_Second",
-        "Days_Since_Prev_Tx",
-        "LoginAttempts",
-        "CustomerAge",
-        "Channel",
-        "Location",
-    ]
-    with st.container(border=True, key="card_anom_table"):
-        hdr_col1, hdr_col2 = st.columns([3, 1])
-        with hdr_col1:
-            st.markdown(f"**Daftar Transaksi ({len(anom_df):,} data, filter: {filter_mode})**")
-        with hdr_col2:
-            if not anom_df.empty:
-                st.download_button(
-                    label="Unduh CSV",
-                    data=anom_df[display_cols].to_csv(index=False).encode("utf-8"),
-                    file_name="transaksi_anomali.csv",
-                    mime="text/csv",
-                    key="download_anomaly_csv",
-                    width="stretch",
-                )
-
-        if anom_df.empty:
-            st.info(
-                "Tidak ada transaksi yang cocok pada filter ini. "
-                "Ubah opsi filter anomali atau klik 'Reset Filter' di sidebar."
-            )
-        else:
-            st.dataframe(anom_df[display_cols].round(2), width="stretch", hide_index=True)
-
-
-def render_tab_predict(df, scaler_km, kmeans, anomaly_bundle):
-    st.subheader("Simulasi Segmen (K-Means) & Skor Anomali Multivariat")
-    st.caption(
-        "Menghitung segmen K-Means (5 fitur) dan skor anomali ensemble "
-        "(Isolation Forest, LOF, PCA Reconstruction) pada 8 fitur."
-    )
-
-    preset_choice = st.selectbox(
-        "Skenario Contoh",
-        options=list(PRESET_SCENARIOS.keys()),
-        key="predict_preset",
-    )
-    preset_vals = PRESET_SCENARIOS[preset_choice]
-
-    with st.container(border=True, key="card_pred_form"):
-        with st.form("prediction_form"):
-            form_col1, form_col2, form_col3 = st.columns(3)
-
-            with form_col1:
-                tx_amount = st.number_input(
-                    "Nominal Transaksi ($)",
-                    min_value=float(df["TransactionAmount"].min()),
-                    max_value=float(df["TransactionAmount"].max()),
-                    value=float(preset_vals["TransactionAmount"]),
-                    step=10.0,
-                    key=f"tx_amount_{preset_choice}",
-                )
-                acc_balance = st.number_input(
-                    "Saldo Akun ($)",
-                    min_value=0.0,
-                    max_value=float(df["AccountBalance"].max()),
-                    value=float(preset_vals["AccountBalance"]),
-                    step=100.0,
-                    key=f"acc_balance_{preset_choice}",
-                )
-
-            with form_col2:
-                tx_duration = st.number_input(
-                    "Durasi (Detik)",
-                    min_value=int(df["TransactionDuration"].min()),
-                    max_value=int(df["TransactionDuration"].max()),
-                    value=int(preset_vals["TransactionDuration"]),
-                    step=5,
-                    key=f"tx_duration_{preset_choice}",
-                )
-                cust_age = st.number_input(
-                    "Usia Nasabah (Thn)",
-                    min_value=int(df["CustomerAge"].min()),
-                    max_value=int(df["CustomerAge"].max()),
-                    value=int(preset_vals["CustomerAge"]),
-                    step=1,
-                    key=f"cust_age_{preset_choice}",
-                )
-
-            with form_col3:
-                login_attempts = st.number_input(
-                    "Upaya Login",
-                    min_value=int(df["LoginAttempts"].min()),
-                    max_value=int(df["LoginAttempts"].max()),
-                    value=int(preset_vals["LoginAttempts"]),
-                    step=1,
-                    key=f"login_attempts_{preset_choice}",
-                )
-                days_since_prev_tx = st.number_input(
-                    "Jeda Transaksi Sebelumnya (Hari)",
-                    min_value=0.0,
-                    max_value=1000.0,
-                    value=float(preset_vals["Days_Since_Prev_Tx"]),
-                    step=10.0,
-                    key=f"days_prev_{preset_choice}",
-                )
-
-            submitted = st.form_submit_button("Analisis Segmen & Skor Anomali", width="stretch")
-
-    if submitted:
-        try:
-            result = predict_transaction(
-                tx_amount=tx_amount,
-                acc_balance=acc_balance,
-                tx_duration=tx_duration,
-                cust_age=cust_age,
-                login_attempts=login_attempts,
-                days_since_prev_tx=days_since_prev_tx,
-                scaler_km=scaler_km,
-                kmeans=kmeans,
-                anomaly_bundle=anomaly_bundle,
-            )
-        except Exception as err:
-            st.error(f"Simulasi gagal dijalankan: {err}. Periksa nilai input lalu coba lagi.")
-            return
-
-        res_col1, res_col2, res_col3, res_col4 = st.columns(4)
-        with res_col1:
-            with st.container(border=True, key="card_pred_seg"):
-                st.metric("Segmen K-Means", result["segment_name"])
-        with res_col2:
-            with st.container(border=True, key="card_pred_score"):
-                st.metric("Skor Anomali (0-100)", f"{result['anomaly_score']:.2f}")
-        with res_col3:
-            with st.container(border=True, key="card_pred_votes"):
-                st.metric("Konsensus Model", f"{result['anomaly_votes']} / 3")
-        with res_col4:
-            with st.container(border=True, key="card_pred_risk"):
-                risk_label = "Tinggi (>= 3x)" if result["is_high_login_risk"] else "Normal (< 3x)"
-                st.metric("Risiko Login", risk_label)
-
-        if result["anomaly_votes"] >= 2:
-            st.error(
-                f"Anomali Konsensus ({result['anomaly_votes']}/3 model mendeteksi outlier). "
-                "Lakukan verifikasi tambahan sebelum memproses transaksi."
-            )
-        elif result["anomaly_votes"] == 1 or result["is_high_login_risk"]:
-            st.warning(
-                "Sinyal Peringatan Parsial (1 model anomali atau aturan LoginAttempts >= 3 aktif). "
-                "Pantau aktivitas akun."
-            )
-        else:
-            st.success("Transaksi berada dalam rentang perilaku normal di seluruh model.")
-
-        st.info(f"Rekomendasi segmen: {CLUSTER_RECOMMENDATIONS[result['cluster']]}")
-
-        chart_col1, chart_col2 = st.columns(2)
-        with chart_col1:
-            with st.container(border=True, key="card_pred_scores_chart"):
-                st.markdown("**Skor anomali tiap model (0-100)**")
-                score_df = pd.DataFrame({
-                    "Model": list(result["model_scores"].keys()),
-                    "Skor": list(result["model_scores"].values()),
-                    "Status": [
-                        "Anomali" if result["model_flags"][m] else "Normal"
-                        for m in result["model_scores"]
-                    ],
-                })
-                fig_scores = px.bar(
-                    score_df,
-                    x="Skor",
-                    y="Model",
-                    orientation="h",
-                    color="Status",
-                    color_discrete_map={"Anomali": "#B91C1C", "Normal": "#1D4ED8"},
-                    text=score_df["Skor"].map("{:.1f}".format),
-                    template="plotly_white",
-                )
-                fig_scores.update_traces(marker_cornerradius=4)
-                fig_scores.update_layout(
-                    xaxis_range=[0, 108],
-                    yaxis_title="",
-                    margin=dict(t=15, b=15, l=15, r=20),
-                )
-                _style_chart(fig_scores, height=230, show_legend=True)
-                st.plotly_chart(fig_scores, width="stretch")
-
-        with chart_col2:
-            with st.container(border=True, key="card_pred_dist_chart"):
-                st.markdown("**Jarak ke centroid K-Means (skala standar)**")
-                dist_df = pd.DataFrame({
-                    "Segmen": list(result["centroid_distances"].keys()),
-                    "Jarak": list(result["centroid_distances"].values()),
-                })
-                max_dist = max(dist_df["Jarak"].max(), 1.0)
-                fig_dist = px.bar(
-                    dist_df,
-                    x="Jarak",
-                    y="Segmen",
-                    orientation="h",
-                    color="Segmen",
-                    color_discrete_map=CLUSTER_COLORS,
-                    text=dist_df["Jarak"].map("{:.3f}".format),
-                    template="plotly_white",
-                )
-                fig_dist.update_traces(marker_cornerradius=4)
-                fig_dist.update_layout(
-                    xaxis_range=[0, max_dist * 1.2],
-                    yaxis_title="",
-                    margin=dict(t=15, b=15, l=15, r=20),
-                )
-                _style_chart(fig_dist, height=230, show_legend=False)
-                st.plotly_chart(fig_dist, width="stretch")
-
-
-def render_tab_eval(df, scaler_km, kmeans, anomaly_bundle):
-    st.subheader("Evaluasi Model Unsupervised & Keterbatasan")
-    st.caption("Evaluasi konsensus 3 detektor anomali pada 8 fitur serta seleksi cluster K-Means.")
-
-    k_evaluation = load_k_evaluation()
-    silhouette_k2 = float(k_evaluation.loc[k_evaluation["k"] == 2, "Silhouette Score"].iloc[0])
-    contamination = anomaly_bundle.get("contamination", 0.05)
-    consensus_count = int((df["Anomaly_Votes"] >= 2).sum())
-
-    met1, met2, met3, met4 = st.columns(4)
-    with met1:
-        with st.container(border=True, key="card_eval_sil"):
-            st.metric("K-Means (k=2) Silhouette", f"{silhouette_k2:.4f}")
-    with met2:
-        with st.container(border=True, key="card_eval_pca"):
-            st.metric(
-                "PCA Komponen (90% Var)",
-                f"{anomaly_bundle['pca_n_components']} ({anomaly_bundle['pca_explained_variance']*100:.2f}%)",
-            )
-    with met3:
-        with st.container(border=True, key="card_eval_cons"):
-            st.metric(
-                "Anomali Konsensus (>= 2 model)",
-                f"{consensus_count} ({consensus_count/len(df)*100:.2f}%)",
-            )
-    with met4:
-        with st.container(border=True, key="card_eval_feat"):
-            st.metric("Fitur Deteksi Anomali", str(len(ANOMALY_FEATURES)))
-
-    eval_col1, eval_col2 = st.columns([1, 1.25])
-    with eval_col1:
-        with st.container(border=True, key="card_eval_overlap"):
-            st.markdown("**Kesepakatan antar-model (jumlah transaksi yang sama)**")
-            flags = df[["ISO_Flag", "LOF_Flag", "PCA_Flag"]].astype(int)
-            flags.columns = ["Isolation Forest", "LOF", "PCA Error"]
-            overlap = flags.T @ flags
-            fig_ov = px.imshow(
-                overlap,
-                text_auto=True,
-                color_continuous_scale=CLUSTER_GRADIENTS["blue"],
-                template="plotly_white",
-            )
-            fig_ov.update_layout(margin=dict(t=20, b=20, l=20, r=20))
-            _style_chart(fig_ov, height=340, show_legend=False)
-            st.plotly_chart(fig_ov, width="stretch")
-
-    with eval_col2:
-        with st.container(border=True, key="card_eval_votes"):
-            st.markdown("**Rata-rata fitur per tingkat konsensus (0-3 model)**")
-            vote_prof = (
-                df.groupby("Anomaly_Votes")[[
-                    "TransactionAmount",
-                    "AccountBalance",
-                    "Balance_Ratio",
-                    "Amount_Per_Second",
-                    "LoginAttempts",
-                ]]
-                .mean()
-                .round(2)
-                .reset_index()
-            )
-            st.dataframe(vote_prof, width="stretch", hide_index=True)
-
-    with st.expander("Evaluasi Jumlah Cluster K-Means (k = 2..8)"):
-        k_col1, k_col2 = st.columns(2)
-        fig_elbow = px.line(
-            k_evaluation, x="k", y="Inertia", markers=True,
-            title="Inertia per k (Elbow Method)", template="plotly_white",
-        )
-        fig_elbow.update_traces(line_color="#1D4ED8")
-        fig_elbow.add_vline(x=2, line_dash="dash", line_color="#B91C1C")
-        _style_chart(fig_elbow, height=340, show_legend=False)
-        k_col1.plotly_chart(fig_elbow, width="stretch")
-
-        fig_sil = px.line(
-            k_evaluation, x="k", y="Silhouette Score", markers=True,
-            title="Silhouette Score per k", template="plotly_white",
-        )
-        fig_sil.update_traces(line_color="#1D4ED8")
-        fig_sil.add_vline(x=2, line_dash="dash", line_color="#B91C1C")
-        _style_chart(fig_sil, height=340, show_legend=False)
-        k_col2.plotly_chart(fig_sil, width="stretch")
-
-        centroids_orig = pd.DataFrame(
-            scaler_km.inverse_transform(kmeans.cluster_centers_),
-            columns=CLUSTERING_FEATURES,
-        )
-        centroids_orig.insert(0, "Segmen", [CLUSTER_LABELS[i] for i in range(kmeans.n_clusters)])
-        st.dataframe(centroids_orig.round(2), width="stretch", hide_index=True)
-
-    st.warning(
-        "Keterbatasan Metodologi & Sumber Data:\n"
-        "- Tanpa label fraud asli (ground truth): seluruh model bersifat unsupervised, "
-        "sehingga precision dan recall terhadap fraud nyata tidak dapat dihitung. "
-        "Konsensus antar-model hanya menunjukkan kesepakatan, bukan kebenaran.\n"
-        f"- Pemisahan K-Means lemah: Silhouette Score = {silhouette_k2:.4f} (k = 2) menandakan batas segmen "
-        "perilaku masih tumpang tindih; deteksi anomali dipisahkan memakai ensemble 3 detektor multivariat.\n"
-        f"- Jumlah anomali mengikuti pilihan contamination = {contamination:.2f}, bukan temuan data. "
-        "Uji sensitivitas ada di notebook (bagian 7.1).\n"
-        "- Days_Since_Prev_Tx: pada data sintetis ini TransactionDate hanya mencakup rentang sempit, "
-        "sehingga fitur tersebut praktis mencerminkan PreviousTransactionDate, bukan perilaku jeda yang bermakna.\n"
-        "- LoginAttempts ikut menjadi fitur anomali, sehingga Risiko Login dan skor anomali saling tumpang tindih.\n"
-        "- Sumber data: dataset latihan Dicoding (adaptasi Kaggle Bank Transaction Dataset for Fraud Detection, "
-        "berisi data sintetis kota-kota AS dalam satuan USD)."
-    )
-
-
-def render_custom_styles_and_banner(df):
+def render_styles_and_banner(df):
     total_tx = len(df)
-    anom_tx = int((df["Anomaly_Votes"] >= 2).sum())
+    anom_tx = int(df["Anomaly_Flag"].sum())
     anom_pct = (anom_tx / total_tx) * 100 if total_tx > 0 else 0.0
     risk_tx = int(df["High_Login_Risk"].sum())
     risk_pct = (risk_tx / total_tx) * 100 if total_tx > 0 else 0.0
@@ -1054,9 +208,7 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
 .header-copy {{
     flex: 1 1 360px;
 }}
-.page-header h1,
-.page-header .page-title,
-[data-testid="stMarkdownContainer"] .page-header h1 {{
+.page-header .page-title {{
     font-size: clamp(1.4rem, 2.5vw, 1.9rem) !important;
     font-weight: 700 !important;
     margin: 0 0 6px 0 !important;
@@ -1064,9 +216,7 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
     color: #F8FAFC !important;
     line-height: 1.2 !important;
 }}
-.page-header p,
-.page-header .page-subtitle,
-[data-testid="stMarkdownContainer"] .page-header p {{
+.page-header .page-subtitle {{
     font-size: 0.94rem !important;
     color: #E2E8F0 !important;
     margin: 0 !important;
@@ -1248,8 +398,8 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
 </style>
 <div class="page-header">
 <div class="header-copy">
-<h1 class="page-title">Transaction Anomaly Dashboard</h1>
-<p class="page-subtitle">Segmentasi perilaku nasabah (K-Means, k = 2) dan deteksi anomali multivariat (Isolation Forest, LOF, PCA Reconstruction).</p>
+<div class="page-title" role="heading" aria-level="1">Transaction Anomaly Dashboard</div>
+<p class="page-subtitle">Segmentasi perilaku nasabah (K-Means), penanda transaksi tidak biasa (Isolation Forest), dan aturan risiko login. Data sintetis, proyek belajar.</p>
 </div>
 <div class="header-meta">
 <div class="meta-item">
@@ -1258,7 +408,7 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
 </div>
 <div class="meta-item">
 <div class="meta-value">{anom_tx:,} ({anom_pct:.2f}%)</div>
-<div class="meta-label">Anomali (&gt;= 2 model)</div>
+<div class="meta-label">Ditandai Anomali</div>
 </div>
 <div class="meta-item">
 <div class="meta-value">{risk_tx:,} ({risk_pct:.2f}%)</div>
@@ -1271,51 +421,550 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
     )
 
 
-def main():
-    st.set_page_config(
-        page_title="Transaction Anomaly Dashboard",
-        layout="wide",
+def reset_filters(occupations, channels, types):
+    st.session_state["filter_occupation"] = occupations
+    st.session_state["filter_channel"] = channels
+    st.session_state["filter_type"] = types
+    st.session_state["filter_location"] = []
+
+
+def render_sidebar(df):
+    occupations = sorted(df["CustomerOccupation"].unique())
+    channels = sorted(df["Channel"].unique())
+    types = sorted(df["TransactionType"].unique())
+    locations = sorted(df["Location"].unique())
+
+    st.session_state.setdefault("filter_occupation", occupations)
+    st.session_state.setdefault("filter_channel", channels)
+    st.session_state.setdefault("filter_type", types)
+    st.session_state.setdefault("filter_location", [])
+
+    st.sidebar.header("Filter Data")
+    st.sidebar.caption("Berlaku pada tab Ringkasan, Segmen, dan Anomali & Login.")
+    sel_occ = st.sidebar.multiselect("Profesi", options=occupations, key="filter_occupation")
+    sel_chan = st.sidebar.multiselect("Kanal", options=channels, key="filter_channel")
+    sel_type = st.sidebar.multiselect("Tipe Transaksi", options=types, key="filter_type")
+    sel_loc = st.sidebar.multiselect("Kota (kosong = semua)", options=locations, key="filter_location")
+
+    st.sidebar.button(
+        "Reset Filter",
+        on_click=reset_filters,
+        args=(occupations, channels, types),
+        key="reset_filters_btn",
+        width="stretch",
     )
 
-    with st.spinner("Memuat dataset dan model..."):
+    filtered = df[
+        df["CustomerOccupation"].isin(sel_occ)
+        & df["Channel"].isin(sel_chan)
+        & df["TransactionType"].isin(sel_type)
+    ]
+    if sel_loc:
+        filtered = filtered[filtered["Location"].isin(sel_loc)]
+
+    st.sidebar.markdown(
+        f'<div class="filter-status-box">Menampilkan <b>{len(filtered):,}</b> '
+        f'dari <b>{len(df):,}</b> transaksi</div>',
+        unsafe_allow_html=True,
+    )
+    st.sidebar.markdown(
+        """
+<div class="author-card">
+<div class="author-label">Dibuat oleh</div>
+<div class="author-name">Ilfa Antaries Yusuf Wijaya</div>
+<div class="author-links">
+<a href="mailto:contact.areswijaya@gmail.com" target="_blank" rel="noopener noreferrer">Email</a>
+<a href="https://www.linkedin.com/in/areswijaya" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+<a href="https://github.com/areswijaya" target="_blank" rel="noopener noreferrer">GitHub</a>
+</div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    return filtered
+
+
+def render_tab_summary(filtered):
+    st.subheader("Ringkasan")
+    total_tx = len(filtered)
+    avg_amt = float(filtered["TransactionAmount"].mean()) if total_tx > 0 else 0.0
+    n_anom = int(filtered["Anomaly_Flag"].sum())
+    anom_pct = (n_anom / total_tx) * 100 if total_tx > 0 else 0.0
+    n_risk = int(filtered["High_Login_Risk"].sum())
+    risk_pct = (n_risk / total_tx) * 100 if total_tx > 0 else 0.0
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        with st.container(border=True, key="card_sum_total"):
+            st.metric("Total Transaksi", f"{total_tx:,}")
+    with c2:
+        with st.container(border=True, key="card_sum_avg"):
+            st.metric("Rata-rata Nominal", f"${avg_amt:,.2f}")
+    with c3:
+        with st.container(border=True, key="card_sum_anom"):
+            st.metric("Ditandai Anomali", f"{n_anom:,} ({anom_pct:.2f}%)")
+    with c4:
+        with st.container(border=True, key="card_sum_risk"):
+            st.metric("Risiko Login (>= 3x)", f"{n_risk:,} ({risk_pct:.2f}%)")
+
+    left, right = st.columns([1, 1.4])
+    with left:
+        with st.container(border=True, key="card_sum_dist"):
+            st.markdown("**Jumlah transaksi per segmen**")
+            counts = (
+                filtered["Segment_Name"]
+                .value_counts()
+                .reindex(list(SEGMENT_COLORS.keys()), fill_value=0)
+                .rename_axis("Segmen")
+                .reset_index(name="Jumlah")
+            )
+            fig = px.bar(
+                counts,
+                x="Segmen",
+                y="Jumlah",
+                color="Segmen",
+                text="Jumlah",
+                color_discrete_map=SEGMENT_COLORS,
+                category_orders={"Segmen": list(SEGMENT_COLORS.keys())},
+                template="plotly_white",
+            )
+            fig.update_traces(textposition="outside", marker_cornerradius=4, cliponaxis=False)
+            fig.update_layout(
+                yaxis_title="Jumlah Transaksi",
+                xaxis_title="",
+                margin=dict(t=25, b=20, l=20, r=20),
+            )
+            _style_chart(fig, height=340, show_legend=False)
+            st.plotly_chart(fig, width="stretch")
+
+    with right:
+        with st.container(border=True, key="card_sum_cat"):
+            top_l, top_r = st.columns([1.5, 1])
+            with top_l:
+                st.markdown("**Proporsi segmen pada tiap kategori (%)**")
+            with top_r:
+                breakdown_by = st.selectbox(
+                    "Kategori",
+                    options=["CustomerOccupation", "Channel", "TransactionType"],
+                    key="summary_breakdown_by",
+                    label_visibility="collapsed",
+                )
+
+            breakdown = (
+                filtered.groupby([breakdown_by, "Segment_Name"]).size().reset_index(name="Jumlah")
+            )
+            breakdown["Persentase (%)"] = (
+                breakdown["Jumlah"] / breakdown.groupby(breakdown_by)["Jumlah"].transform("sum") * 100
+            )
+            fig_cat = px.bar(
+                breakdown,
+                x=breakdown_by,
+                y="Persentase (%)",
+                color="Segment_Name",
+                color_discrete_map=SEGMENT_COLORS,
+                category_orders={"Segment_Name": list(SEGMENT_COLORS.keys())},
+                template="plotly_white",
+            )
+            fig_cat.update_traces(marker_cornerradius=4)
+            fig_cat.update_layout(
+                legend_title_text="Segmen",
+                yaxis_title="Persentase (%)",
+                xaxis_title=breakdown_by,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(t=40, b=20, l=20, r=20),
+            )
+            _style_chart(fig_cat, height=300, show_legend=True)
+            st.plotly_chart(fig_cat, width="stretch")
+
+    with st.container(border=True, key="card_sum_table"):
+        st.markdown("**Rata-rata per segmen**")
+        profile = (
+            filtered.groupby("Segment_Name")[CLUSTERING_FEATURES + ["LoginAttempts"]]
+            .mean()
+            .round(2)
+            .reset_index()
+            .rename(columns={"Segment_Name": "Segmen"})
+        )
+        st.dataframe(profile, width="stretch", hide_index=True)
+
+
+def render_tab_segments(filtered, df):
+    st.subheader("Segmen Nasabah (K-Means)")
+    vis_l, vis_r = st.columns([1.15, 1])
+
+    with vis_l:
+        with st.container(border=True, key="card_seg_scatter"):
+            st.markdown("**Sebaran antarfitur transaksi**")
+            options = CLUSTERING_FEATURES + ["Amount_Per_Second", "Anomaly_Score"]
+            col_x, col_y = st.columns(2)
+            x_axis = col_x.selectbox(
+                "Sumbu X", options, index=options.index("AccountBalance"), key="seg_x_axis"
+            )
+            y_axis = col_y.selectbox(
+                "Sumbu Y", options, index=options.index("TransactionAmount"), key="seg_y_axis"
+            )
+
+            fig = px.scatter(
+                filtered,
+                x=x_axis,
+                y=y_axis,
+                color="Segment_Name",
+                color_discrete_map=SEGMENT_COLORS,
+                category_orders={"Segment_Name": list(SEGMENT_COLORS.keys())},
+                opacity=0.82,
+                template="plotly_white",
+            )
+            fig.update_traces(marker=dict(size=7.5, line=dict(width=0.5, color="#FFFFFF")))
+            fig.update_layout(
+                legend_title_text="Segmen",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                margin=dict(t=40, b=20, l=20, r=20),
+            )
+            _style_chart(fig, height=440, show_legend=True)
+            st.plotly_chart(fig, width="stretch")
+
+    with vis_r:
+        with st.container(border=True, key="card_seg_radar"):
+            st.markdown("**Perbandingan 5 fitur perilaku per segmen (skala 0-1)**")
+            feat_min, feat_max = get_feature_bounds(df)
+            seg_means = filtered.groupby("Segment_Name")[CLUSTERING_FEATURES].mean()
+            seg_norm = (seg_means - feat_min) / (feat_max - feat_min)
+            radar_data = seg_norm.reset_index().melt(
+                id_vars="Segment_Name", var_name="Fitur", value_name="Nilai Normalisasi"
+            )
+
+            fig_radar = px.line_polar(
+                radar_data,
+                r="Nilai Normalisasi",
+                theta="Fitur",
+                color="Segment_Name",
+                line_close=True,
+                color_discrete_map=SEGMENT_COLORS,
+                category_orders={"Segment_Name": list(SEGMENT_COLORS.keys())},
+                template="plotly_white",
+            )
+            fig_radar.update_traces(fill="toself", opacity=0.26, line=dict(width=2.5))
+            fig_radar.update_layout(
+                legend_title_text="Segmen",
+                legend=dict(orientation="h", yanchor="bottom", y=-0.22, xanchor="center", x=0.5),
+                margin=dict(t=40, b=70, l=65, r=65),
+                polar=dict(
+                    domain=dict(x=[0.16, 0.84], y=[0.16, 0.86]),
+                    bgcolor="#FFFFFF",
+                    radialaxis=dict(
+                        gridcolor="#CBD5E1",
+                        linecolor="#CBD5E1",
+                        tickfont=dict(size=11, color="#0F172A"),
+                    ),
+                    angularaxis=dict(
+                        gridcolor="#CBD5E1",
+                        linecolor="#CBD5E1",
+                        tickfont=dict(size=12, color="#0F172A"),
+                    ),
+                ),
+            )
+            _style_chart(fig_radar, height=490, show_legend=True)
+            st.plotly_chart(fig_radar, width="stretch")
+
+    st.markdown("**Profil & Rekomendasi Segmen (data keseluruhan)**")
+    total_all = len(df)
+    seg_cols = st.columns(2)
+    for idx, (col_box, name) in enumerate(zip(seg_cols, ["Nasabah Muda Aktif", "Nasabah Mapan Konservatif"])):
+        seg = df[df["Segment_Name"] == name]
+        if seg.empty:
+            continue
+        top_job = seg["CustomerOccupation"].mode().iloc[0]
+        pct = (len(seg) / total_all) * 100 if total_all > 0 else 0.0
+        color = SEGMENT_COLORS[name]
+        with col_box:
+            with st.container(border=True, key=f"card_seg_{idx}"):
+                st.markdown(
+                    f'<div class="segment-card-head" style="color: {color};">{name}</div>'
+                    f'<div class="segment-card-sub">{len(seg):,} transaksi ({pct:.2f}%), dominan {top_job}</div>',
+                    unsafe_allow_html=True,
+                )
+                m1, m2 = st.columns(2)
+                m1.metric("Usia Rata-rata", f"{seg['CustomerAge'].mean():.2f} thn")
+                m2.metric("Saldo Rata-rata", f"${seg['AccountBalance'].mean():,.2f}")
+                m3, m4 = st.columns(2)
+                m3.metric("Transaksi Rata-rata", f"${seg['TransactionAmount'].mean():,.2f}")
+                m4.metric("Balance Ratio", f"{seg['Balance_Ratio'].mean():.2f}")
+                st.info(f"Ide tindakan: {SEGMENT_ACTIONS.get(name, '-')}")
+
+
+def render_tab_anomaly(filtered):
+    st.subheader("Anomali & Risiko Login")
+    st.caption(
+        "Anomali = ditandai Isolation Forest. Risiko login = aturan LoginAttempts >= 3. "
+        "Keduanya kandidat untuk ditinjau, bukan bukti fraud."
+    )
+    mode = st.selectbox(
+        "Tampilkan",
+        ["Anomali (Isolation Forest)", "Risiko Login (LoginAttempts >= 3)", "Keduanya sekaligus"],
+        key="anomaly_mode",
+    )
+    if mode.startswith("Anomali"):
+        view = filtered[filtered["Anomaly_Flag"]]
+    elif mode.startswith("Risiko"):
+        view = filtered[filtered["High_Login_Risk"]]
+    else:
+        view = filtered[filtered["Anomaly_Flag"] & filtered["High_Login_Risk"]]
+
+    total_filtered = len(filtered)
+    view_pct = (len(view) / total_filtered) * 100 if total_filtered > 0 else 0.0
+    max_score = float(view["Anomaly_Score"].max()) if not view.empty else 0.0
+    mean_amt = float(view["TransactionAmount"].mean()) if not view.empty else 0.0
+
+    k1, k2, k3 = st.columns(3)
+    with k1:
+        with st.container(border=True, key="card_anom_count"):
+            st.metric("Transaksi Terfilter", f"{len(view):,} ({view_pct:.2f}%)")
+    with k2:
+        with st.container(border=True, key="card_anom_max"):
+            st.metric("Skor Anomali Tertinggi", f"{max_score:.2f}")
+    with k3:
+        with st.container(border=True, key="card_anom_avg"):
+            st.metric("Rata-rata Nominal Terfilter", f"${mean_amt:,.2f}")
+
+    c_l, c_r = st.columns([1.4, 1])
+    with c_l:
+        with st.container(border=True, key="card_anom_hist"):
+            st.markdown("**Sebaran skor anomali (0-100)**")
+            fig_hist = px.histogram(
+                filtered,
+                x="Anomaly_Score",
+                color="Anomaly_Flag",
+                nbins=40,
+                template="plotly_white",
+                color_discrete_map=ANOMALY_COLORS,
+                labels={"Anomaly_Score": "Skor anomali (0-100)", "Anomaly_Flag": "Ditandai anomali"},
+            )
+            fig_hist.update_layout(
+                yaxis_title="Jumlah Transaksi",
+                margin=dict(t=25, b=20, l=20, r=20),
+            )
+            _style_chart(fig_hist, height=340, show_legend=True)
+            st.plotly_chart(fig_hist, width="stretch")
+
+    with c_r:
+        with st.container(border=True, key="card_anom_heat"):
+            st.markdown("**Anomali vs aturan login (jumlah transaksi)**")
+            ct = (
+                pd.crosstab(filtered["High_Login_Risk"], filtered["Anomaly_Flag"])
+                .reindex(index=[False, True], columns=[False, True], fill_value=0)
+            )
+            ct.index = ["Normal (< 3)", "Risiko (>= 3)"]
+            ct.columns = ["Normal", "Anomali"]
+            fig_heat = px.imshow(
+                ct,
+                text_auto=True,
+                color_continuous_scale=CLUSTER_GRADIENTS_BLUE,
+                labels=dict(x="Ditandai anomali", y="Risiko login", color="Jumlah"),
+                template="plotly_white",
+            )
+            fig_heat.update_layout(margin=dict(t=25, b=20, l=20, r=20))
+            _style_chart(fig_heat, height=340, show_legend=False)
+            st.plotly_chart(fig_heat, width="stretch")
+
+    columns = [
+        "Segment_Name", "TransactionAmount", "AccountBalance", "Balance_Ratio",
+        "TransactionDuration", "CustomerAge", "LoginAttempts", "Anomaly_Score",
+    ]
+    with st.container(border=True, key="card_anom_table"):
+        hdr_l, hdr_r = st.columns([3, 1])
+        with hdr_l:
+            st.markdown(f"**Daftar transaksi ({len(view):,} data)**")
+        with hdr_r:
+            if not view.empty:
+                sorted_view = view.sort_values("Anomaly_Score", ascending=False)
+                st.download_button(
+                    "Unduh daftar (CSV)",
+                    data=sorted_view[columns].round(2).to_csv(index=False).encode("utf-8"),
+                    file_name="transaksi_ditandai.csv",
+                    mime="text/csv",
+                    key="download_flagged_csv",
+                    width="stretch",
+                )
+
+        if view.empty:
+            st.info(
+                "Tidak ada transaksi yang cocok dengan filter ini. "
+                "Ubah opsi 'Tampilkan' atau klik 'Reset Filter' di sidebar."
+            )
+        else:
+            sorted_view = view.sort_values("Anomaly_Score", ascending=False)
+            st.dataframe(sorted_view[columns].round(2), width="stretch", hide_index=True)
+
+
+def render_tab_predict(df, scaler_km, kmeans, anomaly):
+    st.subheader("Coba Satu Transaksi")
+    st.caption("Masukkan data transaksi, lalu lihat segmennya, skor anomalinya, dan status aturan login.")
+
+    preset_name = st.selectbox("Contoh skenario", list(PRESET_SCENARIOS.keys()), key="predict_preset")
+    preset = PRESET_SCENARIOS[preset_name]
+    segment_map = get_segment_map(df)
+
+    with st.container(border=True, key="card_pred_form"):
+        with st.form("predict_form"):
+            c1, c2, c3 = st.columns(3)
+            amount = c1.number_input(
+                "Nominal transaksi (USD)", 0.0, 100000.0, float(preset["amount"]), key=f"amount_{preset_name}"
+            )
+            balance = c1.number_input(
+                "Saldo akun (USD)", 0.0, 1000000.0, float(preset["balance"]), key=f"balance_{preset_name}"
+            )
+            duration = c2.number_input(
+                "Durasi transaksi (detik)", 1, 1000, int(preset["duration"]), key=f"duration_{preset_name}"
+            )
+            age = c2.number_input(
+                "Usia nasabah", 17, 100, int(preset["age"]), key=f"age_{preset_name}"
+            )
+            login = c3.number_input(
+                "Jumlah upaya login", 1, 20, int(preset["login"]), key=f"login_{preset_name}"
+            )
+            submitted = st.form_submit_button("Hitung segmen & skor", width="stretch")
+
+    if not submitted:
+        return
+
+    result = predict_transaction(
+        amount, balance, duration, age, login, scaler_km, kmeans, anomaly, segment_map
+    )
+
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        with st.container(border=True, key="card_pred_seg"):
+            st.metric("Segmen", result["segment"])
+    with m2:
+        with st.container(border=True, key="card_pred_score"):
+            st.metric("Skor anomali (0-100)", f"{result['anomaly_score']:.1f}")
+    with m3:
+        with st.container(border=True, key="card_pred_if"):
+            st.metric("Isolation Forest", "Anomali" if result["is_anomaly"] else "Tidak anomali")
+    with m4:
+        with st.container(border=True, key="card_pred_login"):
+            st.metric("Aturan login", "Risiko" if result["is_high_login_risk"] else "Normal")
+
+    st.caption(
+        f"Balance_Ratio {result['balance_ratio']:.2f} | "
+        f"Nominal per detik ${result['amount_per_second']:.2f}"
+    )
+    if result["is_anomaly"] or result["is_high_login_risk"]:
+        st.warning("Transaksi ini layak ditinjau. Ini penanda dari model dan aturan sederhana, bukan bukti fraud.")
+    else:
+        st.success("Tidak ada penanda pada transaksi ini.")
+
+    with st.container(border=True, key="card_pred_bar"):
+        st.markdown("**Posisi skor terhadap ambang anomali**")
+        bar_df = pd.DataFrame({
+            "Metrik": ["Skor Transaksi"],
+            "Skor": [result["anomaly_score"]],
+        })
+        bar_color = "#B91C1C" if result["is_anomaly"] else "#1D4ED8"
+        fig_pos = px.bar(
+            bar_df,
+            x="Skor",
+            y="Metrik",
+            orientation="h",
+            text=bar_df["Skor"].map("{:.1f}".format),
+            template="plotly_white",
+        )
+        fig_pos.update_traces(marker_color=bar_color, marker_cornerradius=4, textposition="outside", cliponaxis=False)
+        fig_pos.add_vline(
+            x=result["threshold_score"],
+            line_dash="dash",
+            line_color="#0F172A",
+            annotation_text=f"Ambang ~{result['threshold_score']:.1f}",
+            annotation_position="top right",
+        )
+        fig_pos.update_layout(
+            xaxis_range=[0, 108],
+            xaxis_title="Skor anomali (0-100)",
+            yaxis_title="",
+            margin=dict(t=30, b=20, l=15, r=20),
+        )
+        _style_chart(fig_pos, height=170, show_legend=False)
+        st.plotly_chart(fig_pos, width="stretch")
+
+    st.info(f"Ide tindakan untuk segmen ini: {SEGMENT_ACTIONS.get(result['segment'], '-')}")
+
+
+def render_tab_notes(anomaly):
+    st.subheader("Catatan Metode & Keterbatasan")
+    k_eval = load_k_evaluation()
+    sil_text = "-"
+    if k_eval is not None and (k_eval["k"] == 2).any():
+        sil_text = f"{float(k_eval.loc[k_eval['k'] == 2, 'Silhouette Score'].iloc[0]):.4f}"
+
+    with st.container(border=True, key="card_notes_body"):
+        st.markdown(
+            f"""
+**Yang dilakukan**
+- **K-Means (k = 2)** pada 5 fitur perilaku untuk mengelompokkan nasabah.
+- **Isolation Forest** pada 6 fitur (5 fitur perilaku + nominal per detik) untuk menandai transaksi yang tidak biasa.
+- **Aturan sederhana** `LoginAttempts >= {LOGIN_RISK_THRESHOLD}` untuk upaya login berulang. Ini aturan, bukan hasil model.
+
+**Keterbatasan**
+- **Data sintetis dan tanpa label fraud asli.** Precision dan recall tidak bisa dihitung. Anomali hanya berarti "tidak biasa", bukan "fraud".
+- **Segmen saling tumpang tindih.** Silhouette Score k = 2 hanya {sil_text}. Dua segmen pada dasarnya memisahkan nasabah muda bersaldo kecil dan nasabah lebih tua bersaldo besar.
+- **Jumlah anomali mengikuti pilihan `contamination = {anomaly.get('contamination', 0.05):.2f}`**, bukan temuan dari data. Uji sensitivitasnya ada di notebook (bagian 5.1).
+- **Sumber data:** dataset latihan Dicoding (adaptasi Kaggle *Bank Transaction Dataset for Fraud Detection*), transaksi sintetis kota-kota AS dalam USD.
+"""
+        )
+
+    if k_eval is not None:
+        with st.expander("Hasil Elbow & Silhouette (k = 2 sampai 8)"):
+            col_a, col_b = st.columns(2)
+            fig_a = px.line(k_eval, x="k", y="Inertia", markers=True, template="plotly_white", title="Inertia")
+            fig_a.update_traces(line_color="#1D4ED8")
+            fig_a.add_vline(x=2, line_dash="dash", line_color="#B91C1C")
+            _style_chart(fig_a, height=320, show_legend=False)
+            col_a.plotly_chart(fig_a, width="stretch")
+
+            fig_b = px.line(
+                k_eval, x="k", y="Silhouette Score", markers=True, template="plotly_white", title="Silhouette Score"
+            )
+            fig_b.update_traces(line_color="#1D4ED8")
+            fig_b.add_vline(x=2, line_dash="dash", line_color="#B91C1C")
+            _style_chart(fig_b, height=320, show_legend=False)
+            col_b.plotly_chart(fig_b, width="stretch")
+
+            st.dataframe(k_eval.round(4), width="stretch", hide_index=True)
+
+
+def main():
+    st.set_page_config(page_title="Transaction Anomaly Dashboard", layout="wide")
+
+    with st.spinner("Memuat data dan model..."):
         try:
             df = load_data()
-            scaler_km, kmeans, anomaly_bundle = load_models()
+            scaler_km, kmeans, anomaly = load_models()
         except (FileNotFoundError, OSError, ValueError, KeyError) as err:
             st.error(
-                f"Gagal memuat dataset atau model: {err}. "
-                "Pastikan file di folder data/ dan models/ tersedia, lalu muat ulang halaman."
+                f"Gagal memuat data atau model: {err}. "
+                "Pastikan folder data/ dan models/ berisi hasil dari notebook."
             )
             st.stop()
 
-    render_custom_styles_and_banner(df)
-
-    filtered_df = render_sidebar(df)
-    if filtered_df.empty:
-        st.warning(
-            "Tidak ada transaksi yang cocok dengan filter aktif. "
-            "Klik 'Reset Filter' di sidebar untuk menampilkan semua data."
-        )
+    render_styles_and_banner(df)
+    filtered = render_sidebar(df)
+    if filtered.empty:
+        st.warning("Tidak ada transaksi yang cocok dengan filter. Klik 'Reset Filter' di sidebar.")
         return
 
-    tab_summary, tab_cluster, tab_anomaly, tab_predict, tab_eval = st.tabs([
-        "Ringkasan",
-        "Visualisasi Cluster",
-        "Deteksi Anomali",
-        "Simulasi & Skor Anomali",
-        "Evaluasi & Keterbatasan",
-    ])
-
-    with tab_summary:
-        render_tab_summary(filtered_df)
-    with tab_cluster:
-        render_tab_cluster(filtered_df, df)
-    with tab_anomaly:
-        render_tab_anomaly(filtered_df)
-    with tab_predict:
-        render_tab_predict(df, scaler_km, kmeans, anomaly_bundle)
-    with tab_eval:
-        render_tab_eval(df, scaler_km, kmeans, anomaly_bundle)
+    tab_sum, tab_seg, tab_anom, tab_pred, tab_notes = st.tabs(
+        ["Ringkasan", "Segmen", "Anomali & Login", "Coba Transaksi", "Catatan"]
+    )
+    with tab_sum:
+        render_tab_summary(filtered)
+    with tab_seg:
+        render_tab_segments(filtered, df)
+    with tab_anom:
+        render_tab_anomaly(filtered)
+    with tab_pred:
+        render_tab_predict(df, scaler_km, kmeans, anomaly)
+    with tab_notes:
+        render_tab_notes(anomaly)
 
 
 if __name__ == "__main__":

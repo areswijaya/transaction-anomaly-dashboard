@@ -2,48 +2,35 @@
 
 [![Streamlit App](https://img.shields.io/badge/Streamlit_App-Live_Demo-FF4B4B?style=flat)](https://transaction-anomaly-dashboard-areswijaya.streamlit.app)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.67%2B-FF4B4B?style=flat)
-![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-1.9.1-F7931E?style=flat)
-![Plotly](https://img.shields.io/badge/Plotly-Express-3F4F75?style=flat)
+![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B?style=flat)
+![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-ML-F7931E?style=flat)
 
-> **English summary:** A Streamlit dashboard that combines K-Means behavioral segmentation with a three-model unsupervised anomaly ensemble (Isolation Forest, Local Outlier Factor, PCA reconstruction error) and a separate rule-based login-risk flag, built on 2,516 **synthetic** bank transactions. There is no ground-truth fraud label, so flagged transactions are *candidates for review*, not confirmed fraud. Limitations are documented below.
+Proyek belajar saya untuk berlatih alur data science dari awal sampai tampil di web: membersihkan data, mengelompokkan nasabah, menandai transaksi yang tidak biasa, lalu menyajikannya di dashboard interaktif.
 
-Aplikasi web berbasis Streamlit untuk segmentasi perilaku transaksi nasabah memakai K-Means dan deteksi anomali multivariat memakai Isolation Forest, Local Outlier Factor, dan PCA Reconstruction Error.
+> **English summary:** A learning project on 2,516 **synthetic** bank transactions. K-Means groups customers into two behavioral segments, Isolation Forest flags unusual transactions, and a simple rule flags repeated login attempts. All results are delivered in a Streamlit dashboard. The data has no real fraud labels, so flagged transactions are candidates for review, not confirmed fraud.
 
-## Tentang Proyek
+## Yang Saya Kerjakan
 
-Proyek ini menganalisis 2,516 data transaksi nasabah melalui dua lapisan unsupervised machine learning dan satu aturan eksplisit:
+1. **Membersihkan data**: membuang duplikat, mengisi nilai kosong (median untuk angka, modus untuk teks).
+2. **Segmentasi dengan K-Means** (k = 2, Silhouette Score 0.2634) pada 5 fitur perilaku:
+   - **Nasabah Muda Aktif** (34.30%): usia rata-rata sekitar 27 tahun, saldo lebih kecil, porsi transaksi terhadap saldo lebih besar.
+   - **Nasabah Mapan Konservatif** (65.70%): usia rata-rata sekitar 54 tahun, saldo lebih besar, porsi transaksi lebih kecil.
+3. **Penanda anomali dengan Isolation Forest** pada 6 fitur (5 fitur perilaku + nominal per detik). Model diminta menandai sekitar 5% transaksi yang paling tidak biasa, lalu tiap transaksi diberi skor 0-100.
+4. **Aturan risiko login**: `LoginAttempts >= 3` menyaring 93 transaksi (3.70%). Ini aturan sederhana, bukan hasil model.
+5. **Dashboard Streamlit** dengan 5 tab (`Ringkasan`, `Segmen`, `Anomali & Login`, `Coba Transaksi`, `Catatan`), filter profesi/kanal/tipe/kota, grafik, tabel yang bisa diunduh, dan form untuk mencoba satu transaksi.
 
-1. Segmentasi perilaku (K-Means, k = 2, Silhouette Score 0.2634) pada 5 fitur (`TransactionAmount`, `CustomerAge`, `TransactionDuration`, `AccountBalance`, `Balance_Ratio`):
-   - `0 - Nasabah Muda Aktif` (863 transaksi / 34.30%): rata-rata usia 27.30 tahun, saldo $1,584.53, transaksi $347.07, `Balance_Ratio` 0.47.
-   - `1 - Nasabah Mapan Konservatif` (1,653 transaksi / 65.70%): rata-rata usia 53.71 tahun, saldo $6,955.81, transaksi $270.63, `Balance_Ratio` 0.05.
-2. Deteksi anomali multivariat (ensemble 3 model) pada 8 fitur, termasuk jeda transaksi `Days_Since_Prev_Tx` dan kecepatan nominal `Amount_Per_Second`:
-   - Isolation Forest (`contamination=0.05`)
-   - Local Outlier Factor (`n_neighbors=20`, `contamination=0.05`, `novelty=True`)
-   - PCA Reconstruction Error (komponen utama pada 90% varians, ambang persentil ke-95)
-   - Ketiga model digabung menjadi skor anomali kontinu (0-100) dan konsensus `Anomaly_Votes` (0-3). Transaksi yang ditandai minimal 2 model disebut `Anomali Konsensus (>= 2 model)`. Jumlahnya mengikuti nilai `contamination` yang dipilih, dan stabilitasnya terhadap nilai tersebut diuji di notebook (bagian 7.1). Angka terkini tampil di tab **Ringkasan** dan **Evaluasi & Keterbatasan** dashboard.
-3. `Risiko Login (LoginAttempts >= 3)`: menyaring 93 transaksi (3.70%) dengan 3-5 upaya login sebagai aturan terpisah, bukan hasil prediksi model.
+## Apa yang Saya Pelajari
 
-## Sumber Dataset
+- Nilai Silhouette yang rendah (0.2634) berarti segmen saling tumpang tindih. Saya melaporkannya apa adanya, tidak dipoles.
+- Tanpa label fraud asli, hasil model tidak bisa dihitung akurasinya. "Anomali" di sini hanya berarti "tidak biasa".
+- Jumlah anomali ditentukan oleh pengaturan `contamination` yang saya pilih. Saya mengujinya di 0.03, 0.05, dan 0.07 untuk melihat seberapa banyak hasilnya berubah.
+- Fitur yang saling menumpuk sebaiknya dipisah. `LoginAttempts` tidak dipakai di K-Means maupun Isolation Forest, supaya aturan login berdiri sendiri.
 
-File mentah `data/raw.xlsx` (2,537 baris sebelum pembersihan duplikat menjadi 2,516 baris) berasal dari dataset latihan Dicoding yang mengadaptasi Kaggle Bank Transaction Dataset for Fraud Detection. Dataset ini berisi data sintetis transaksi bank di kota-kota Amerika Serikat dalam satuan USD dan tidak memiliki label fraud asli (ground truth).
+## Keterbatasan
 
-## Keterbatasan Metodologi
-
-- **Tidak ada label fraud asli.** Seluruh model bersifat unsupervised, sehingga precision dan recall terhadap kejadian fraud nyata tidak dapat dihitung. Konsensus antar-model hanya menunjukkan kesepakatan, bukan kebenaran.
-- **Jumlah anomali mengikuti pilihan `contamination`.** Nilai 0.05 ditetapkan sendiri, bukan temuan dari data. Notebook menguji 0.03, 0.05, dan 0.07 lalu mengukur kemiripan daftar konsensus (Jaccard index).
-- **Pemisahan K-Means lemah.** Silhouette Score tertinggi berada pada k = 2 sebesar 0.2634, dan dua segmen pada dasarnya memisahkan profil usia dan saldo. K-Means dipakai sebagai konteks segmen nasabah, bukan detektor anomali.
-- **`Days_Since_Prev_Tx` perlu dibaca hati-hati.** Pada data sintetis ini `TransactionDate` hanya mencakup rentang sempit, sehingga fitur tersebut praktis mencerminkan `PreviousTransactionDate`, bukan perilaku jeda yang bermakna. Notebook (bagian 7.2) mencetak rentang tanggal dan korelasinya.
-- **`LoginAttempts` ikut menjadi fitur anomali**, sehingga `Risiko Login` dan skor anomali saling tumpang tindih. Notebook (bagian 7.2) menampilkan tabel silangnya.
-
-## Fitur Dashboard
-
-- **Filter Sidebar**: menyaring data berdasarkan profesi, kanal transaksi, tipe transaksi, dan kota, lengkap dengan tombol reset.
-- **Ringkasan**: menampilkan total transaksi, rata-rata nominal, `Anomali Konsensus (>= 2 model)`, `Risiko Login (LoginAttempts >= 3)`, distribusi segmen, komposisi kategori, dan tabel profil.
-- **Visualisasi Cluster**: menampilkan scatter plot antarfitur (termasuk skor anomali dan kecepatan transaksi), radar chart profil segmen, serta rekomendasi segmen.
-- **Deteksi Anomali**: menyaring `Anomali Konsensus (>= 2 model)`, konsensus 3 model, flag >= 1 model, atau `Risiko Login (LoginAttempts >= 3)`, lalu memplot distribusi skor 0-100 dan menyediakan ekspor `transaksi_anomali.csv`.
-- **Simulasi & Skor Anomali**: menghitung segmen K-Means, skor anomali tiap model, konsensus model, dan status risiko login dari input transaksi.
-- **Evaluasi & Keterbatasan**: menampilkan matriks kesepakatan antar-model anomali, profil rata-rata per tingkat konsensus (0-3 model), evaluasi Elbow/Silhouette K-Means (k = 2..8, dibaca dari `models/k_evaluation.csv`), serta sumber data dan keterbatasan.
+- Data sintetis (dataset latihan Dicoding, adaptasi Kaggle *Bank Transaction Dataset for Fraud Detection*), transaksi kota-kota Amerika Serikat dalam USD.
+- Tidak ada label fraud asli, jadi precision dan recall tidak bisa dihitung.
+- Dua segmen pada dasarnya memisahkan nasabah muda bersaldo kecil dan nasabah lebih tua bersaldo besar.
 
 ## Struktur Folder
 
@@ -52,13 +39,13 @@ transaction-anomaly-dashboard/
 ├── .streamlit/
 │   └── config.toml
 ├── data/
-│   ├── data_clustering_clean.csv
-│   └── raw.xlsx
+│   ├── raw.xlsx
+│   └── data_clustering_clean.csv
 ├── models/
-│   ├── anomaly_bundle.joblib
-│   ├── k_evaluation.csv
+│   ├── scaler_clustering.joblib
 │   ├── kmeans_model.joblib
-│   └── scaler_clustering.joblib
+│   ├── anomaly_model.joblib
+│   └── k_evaluation.csv
 ├── notebooks/
 │   └── clustering.ipynb
 ├── tests/
@@ -70,29 +57,18 @@ transaction-anomaly-dashboard/
 └── README.md
 ```
 
-## Cara Menjalankan di Komputer Lokal
-
-Pastikan Python sudah terpasang, lalu jalankan perintah berikut dari dalam folder proyek:
+## Cara Menjalankan
 
 ```bash
 pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-Setelah dijalankan, dashboard bisa dibuka di browser melalui `http://localhost:8501`.
+Dashboard terbuka di `http://localhost:8501`.
 
-## Mereproduksi Hasil dari Notebook
+Semua file di `data/` (selain `raw.xlsx`) dan `models/` dihasilkan oleh `notebooks/clustering.ipynb`. Jalankan notebook dari atas ke bawah (*Run All*) untuk membuatnya ulang.
 
-Seluruh artefak yang dibaca dashboard dihasilkan oleh `notebooks/clustering.ipynb`. Jalankan notebook dari atas ke bawah (*Run All*) dari folder yang berisi `data/raw.xlsx` dan `models/`. Sel terakhir menulis ulang:
-
-- `data/data_clustering_clean.csv` (data berlabel: segmen, flag model, skor, votes)
-- `models/scaler_clustering.joblib` dan `models/kmeans_model.joblib`
-- `models/anomaly_bundle.joblib` (scaler, ketiga detektor, ambang PCA, batas skor)
-- `models/k_evaluation.csv` (hasil Elbow/Silhouette k = 2..8)
-
-Sel penutup juga mencetak ringkasan angka yang bisa dicocokkan dengan tab Evaluasi di dashboard.
-
-## Pengujian
+Pengujian sederhana:
 
 ```bash
 python -m unittest discover -s tests -v

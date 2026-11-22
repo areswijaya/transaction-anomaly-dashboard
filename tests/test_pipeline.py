@@ -1,3 +1,7 @@
+"""Pemeriksaan sederhana: file hasil notebook ada, saling cocok, dan masuk akal.
+
+Jalankan dari folder proyek:  python -m unittest discover -s tests -v
+"""
 import json
 import unittest
 from pathlib import Path
@@ -7,7 +11,15 @@ import pandas as pd
 
 import app
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parents[1]
+CLUSTERING_FEATURES = [
+    "TransactionAmount", "CustomerAge", "TransactionDuration", "AccountBalance", "Balance_Ratio",
+]
+REQUIRED_COLUMNS = CLUSTERING_FEATURES + [
+    "LoginAttempts", "Amount_Per_Second", "Cluster", "Segment_Name",
+    "High_Login_Risk", "Anomaly_Flag", "Anomaly_Score",
+    "CustomerOccupation", "Channel", "TransactionType",
+]
 
 
 def _relative_luminance(hex_color):
@@ -22,147 +34,116 @@ def _contrast_ratio(c1, c2):
     return (l1 + 0.05) / (l2 + 0.05)
 
 
-class TestTransactionAnomalyPipeline(unittest.TestCase):
+class PipelineTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.df = pd.read_csv(ROOT_DIR / "data" / "data_clustering_clean.csv")
-        cls.scaler_km = joblib.load(ROOT_DIR / "models" / "scaler_clustering.joblib")
-        cls.kmeans = joblib.load(ROOT_DIR / "models" / "kmeans_model.joblib")
-        cls.anomaly_bundle = joblib.load(ROOT_DIR / "models" / "anomaly_bundle.joblib")
+        cls.df = pd.read_csv(BASE_DIR / "data" / "data_clustering_clean.csv")
+        cls.scaler = joblib.load(BASE_DIR / "models" / "scaler_clustering.joblib")
+        cls.kmeans = joblib.load(BASE_DIR / "models" / "kmeans_model.joblib")
+        cls.anomaly = joblib.load(BASE_DIR / "models" / "anomaly_model.joblib")
 
-    def test_clean_dataset_integrity(self):
-        self.assertEqual(len(self.df), 2516)
-        self.assertEqual(set(self.df["Cluster"].unique()), {0, 1})
-        required_cols = [
-            "Days_Since_Prev_Tx",
-            "Amount_Per_Second",
-            "Anomaly_Score",
-            "Anomaly_Votes",
-            "High_Login_Risk",
-        ]
-        for col in required_cols:
-            self.assertIn(col, self.df.columns)
-        self.assertEqual(int(self.df["High_Login_Risk"].sum()), 93)
-        self.assertEqual(int((self.df["Anomaly_Votes"] >= 2).sum()), 70)
-        self.assertTrue(((self.df["Anomaly_Score"] >= 0) & (self.df["Anomaly_Score"] <= 100)).all())
+    def test_columns_exist(self):
+        missing = [c for c in REQUIRED_COLUMNS if c not in self.df.columns]
+        self.assertEqual(missing, [])
 
-    def test_models_match_features_and_csv(self):
-        self.assertEqual(list(self.scaler_km.feature_names_in_), app.CLUSTERING_FEATURES)
-        self.assertEqual(self.kmeans.n_clusters, 2)
-        self.assertEqual(self.anomaly_bundle["features"], app.ANOMALY_FEATURES)
-        self.assertEqual(self.anomaly_bundle["pca_n_components"], 6)
+    def test_no_missing_values(self):
+        self.assertEqual(int(self.df[REQUIRED_COLUMNS].isnull().sum().sum()), 0)
 
-        km_scaled = pd.DataFrame(
-            self.scaler_km.transform(self.df[app.CLUSTERING_FEATURES]),
-            columns=app.CLUSTERING_FEATURES,
+    def test_login_rule_matches_data(self):
+        expected = self.df["LoginAttempts"] >= 3
+        self.assertTrue((self.df["High_Login_Risk"] == expected).all())
+
+    def test_kmeans_matches_saved_clusters(self):
+        scaled = pd.DataFrame(self.scaler.transform(self.df[CLUSTERING_FEATURES]),
+                              columns=CLUSTERING_FEATURES)
+        self.assertTrue((self.kmeans.predict(scaled) == self.df["Cluster"]).all())
+
+    def test_each_cluster_has_one_name(self):
+        names_per_cluster = self.df.groupby("Cluster")["Segment_Name"].nunique()
+        self.assertTrue((names_per_cluster == 1).all())
+
+    def test_anomaly_score_range(self):
+        self.assertTrue(self.df["Anomaly_Score"].between(0, 100).all())
+
+    def test_anomaly_rate_close_to_contamination(self):
+        rate = self.df["Anomaly_Flag"].mean()
+        target = self.anomaly["contamination"]
+        self.assertLess(abs(rate - target), 0.02)
+
+    def test_anomaly_model_matches_saved_flags(self):
+        scaled = self.anomaly["scaler"].transform(self.df[self.anomaly["features"]])
+        flags = self.anomaly["model"].predict(scaled) == -1
+        self.assertTrue((flags == self.df["Anomaly_Flag"].to_numpy()).all())
+
+    def test_predict_transaction_rules_and_edge_cases(self):
+        segment_map = app.get_segment_map(self.df)
+
+        zero_bal = app.predict_transaction(
+            100.0, 0.0, 90, 30, 2, self.scaler, self.kmeans, self.anomaly, segment_map
         )
-        self.assertTrue((self.kmeans.predict(km_scaled) == self.df["Cluster"].to_numpy()).all())
+        self.assertEqual(zero_bal["balance_ratio"], 0.0)
+        self.assertFalse(zero_bal["is_high_login_risk"])
+        self.assertTrue(0.0 <= zero_bal["anomaly_score"] <= 100.0)
+        self.assertTrue(0.0 <= zero_bal["threshold_score"] <= 100.0)
 
-    def test_predict_transaction_normal_and_anomaly(self):
-        normal = app.predict_transaction(
-            tx_amount=250.0,
-            acc_balance=7500.0,
-            tx_duration=115,
-            cust_age=56,
-            login_attempts=1,
-            days_since_prev_tx=490.0,
-            scaler_km=self.scaler_km,
-            kmeans=self.kmeans,
-            anomaly_bundle=self.anomaly_bundle,
+        login_edge = app.predict_transaction(
+            100.0, 5000.0, 90, 30, 3, self.scaler, self.kmeans, self.anomaly, segment_map
         )
-        self.assertEqual(normal["cluster"], 1)
-        self.assertFalse(normal["is_high_login_risk"])
-        self.assertEqual(normal["anomaly_votes"], 0)
-        self.assertTrue(0.0 <= normal["anomaly_score"] <= 100.0)
+        self.assertTrue(login_edge["is_high_login_risk"])
 
         extreme = app.predict_transaction(
-            tx_amount=1450.0,
-            acc_balance=800.0,
-            tx_duration=35,
-            cust_age=40,
-            login_attempts=4,
-            days_since_prev_tx=320.0,
-            scaler_km=self.scaler_km,
-            kmeans=self.kmeans,
-            anomaly_bundle=self.anomaly_bundle,
+            1450.0, 800.0, 35, 40, 1, self.scaler, self.kmeans, self.anomaly, segment_map
         )
-        self.assertTrue(extreme["is_high_login_risk"])
-        self.assertGreaterEqual(extreme["anomaly_votes"], 2)
-        self.assertGreater(extreme["anomaly_score"], normal["anomaly_score"])
+        self.assertTrue(extreme["is_anomaly"])
 
-    def test_predict_transaction_zero_balance_edge_case(self):
-        result = app.predict_transaction(
-            tx_amount=100.0,
-            acc_balance=0.0,
-            tx_duration=0,
-            cust_age=30,
-            login_attempts=2,
-            days_since_prev_tx=450.0,
-            scaler_km=self.scaler_km,
-            kmeans=self.kmeans,
-            anomaly_bundle=self.anomaly_bundle,
+        conservative = app.predict_transaction(
+            250.0, 7500.0, 115, 56, 1, self.scaler, self.kmeans, self.anomaly, segment_map
         )
-        self.assertEqual(result["balance_ratio"], 0.0)
-        self.assertEqual(result["amount_per_second"], 100.0)
-        self.assertFalse(result["is_high_login_risk"])
+        self.assertEqual(conservative["segment"], "Nasabah Mapan Konservatif")
 
-    def test_build_summary_table_normal_and_empty(self):
-        df = app.load_data()
-        summary = app.build_summary_table(df)
-        self.assertEqual(len(summary), 2)
-        self.assertEqual(int(summary["Jumlah_Transaksi"].sum()), 2516)
+    def test_writing_and_artifacts(self):
+        for stale in [
+            BASE_DIR / "models" / "anomaly_bundle.joblib",
+            BASE_DIR / "notebooks" / "classification.ipynb",
+            BASE_DIR / "models" / "rf_classifier_pipeline.joblib",
+        ]:
+            self.assertFalse(stale.exists(), f"Stale artifact exists: {stale}")
 
-        empty_summary = app.build_summary_table(df.iloc[0:0])
-        self.assertEqual(len(empty_summary), 2)
-        self.assertTrue((empty_summary["Persentase (%)"] == 0.0).all())
-
-    def test_writing_consistency_antislop_and_contrast(self):
-        self.assertFalse((ROOT_DIR / "notebooks" / "classification.ipynb").exists())
-        self.assertFalse((ROOT_DIR / "models" / "rf_classifier_pipeline.joblib").exists())
-
-        config_text = (ROOT_DIR / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+        config_text = (BASE_DIR / ".streamlit" / "config.toml").read_text(encoding="utf-8")
         self.assertIn('primaryColor = "#1D4ED8"', config_text)
 
         text_files = [
-            ROOT_DIR / "app.py",
-            ROOT_DIR / "README.md",
-            ROOT_DIR / "notebooks" / "clustering.ipynb",
-            ROOT_DIR / "tests" / "test_pipeline.py",
+            BASE_DIR / "app.py",
+            BASE_DIR / "README.md",
+            BASE_DIR / "notebooks" / "clustering.ipynb",
+            BASE_DIR / "tests" / "test_pipeline.py",
         ]
         for file_path in text_files:
             content = file_path.read_text(encoding="utf-8")
             self.assertNotIn("\u2014", content, f"Em dash found in {file_path.name}")
             self.assertNotIn("\u2013", content, f"En dash found in {file_path.name}")
 
-        for file_path in [ROOT_DIR / "app.py", ROOT_DIR / "README.md", ROOT_DIR / "notebooks" / "clustering.ipynb"]:
-            content = file_path.read_text(encoding="utf-8")
-            self.assertIn("Transaction Anomaly Dashboard", content)
-            self.assertNotIn("rf_classifier_pipeline", content)
-
-        app_text = (ROOT_DIR / "app.py").read_text(encoding="utf-8")
-        for slop_marker in ["hero-badge", "CREATED BY", "linear-gradient"]:
+        app_text = (BASE_DIR / "app.py").read_text(encoding="utf-8")
+        for slop_marker in ["linear-gradient", "hero-badge", "CREATED BY"]:
             self.assertNotIn(slop_marker, app_text)
-        self.assertIn(".page-header h1", app_text)
-        self.assertIn("color: #F8FAFC !important;", app_text)
+        self.assertIn("padding-top: 3.75rem", app_text)
 
-        nb = json.loads((ROOT_DIR / "notebooks" / "clustering.ipynb").read_text(encoding="utf-8"))
+        nb = json.loads((BASE_DIR / "notebooks" / "clustering.ipynb").read_text(encoding="utf-8"))
         for cell in nb["cells"]:
             if cell["cell_type"] == "code":
                 self.assertEqual(cell.get("outputs", []), [])
 
-        # WCAG AA text (>= 4.5:1) and non-text border (>= 3.0:1) checks
+    def test_palette_contrast(self):
         text_pairs = [
             ("#F8FAFC", "#0F172A"),
             ("#E2E8F0", "#0F172A"),
             ("#CBD5E1", "#1E293B"),
             ("#F8FAFC", "#1E293B"),
-            ("#334155", "#FFFFFF"),
             ("#0F172A", "#F8FAFC"),
             ("#475569", "#FFFFFF"),
             ("#1D4ED8", "#FFFFFF"),
             ("#B45309", "#FFFFFF"),
             ("#B91C1C", "#FFFFFF"),
-            ("#1E3A8A", "#DBEAFE"),
         ]
         for fg, bg in text_pairs:
             self.assertGreaterEqual(_contrast_ratio(fg, bg), 4.5, f"Contrast failed for {fg} on {bg}")
