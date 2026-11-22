@@ -381,7 +381,7 @@ def render_tab_summary(filtered_df):
                 text="Jumlah_Transaksi",
                 template="plotly_white",
             )
-            fig_dist.update_traces(textposition="outside", marker_cornerradius=4)
+            fig_dist.update_traces(textposition="outside", marker_cornerradius=4, cliponaxis=False)
             fig_dist.update_layout(
                 yaxis_title="Jumlah Transaksi",
                 xaxis_title="",
@@ -448,7 +448,7 @@ def render_tab_summary(filtered_df):
 def render_tab_cluster(filtered_df, df):
     st.subheader("Visualisasi & Profil Cluster (K-Means, k = 2)")
 
-    vis_col1, vis_col2 = st.columns([1.35, 1])
+    vis_col1, vis_col2 = st.columns([1.15, 1])
 
     with vis_col1:
         with st.container(border=True, key="card_cluster_scatter"):
@@ -519,8 +519,9 @@ def render_tab_cluster(filtered_df, df):
             fig_radar.update_layout(
                 legend_title_text="Segmen",
                 legend=dict(orientation="h", yanchor="bottom", y=-0.22, xanchor="center", x=0.5),
-                margin=dict(t=30, b=55, l=35, r=35),
+                margin=dict(t=40, b=70, l=65, r=65),
                 polar=dict(
+                    domain=dict(x=[0.16, 0.84], y=[0.16, 0.86]),
                     bgcolor="#FFFFFF",
                     radialaxis=dict(
                         gridcolor="#CBD5E1",
@@ -666,7 +667,7 @@ def render_tab_anomaly(filtered_df):
                 color_continuous_scale=CLUSTER_GRADIENTS["red"],
                 template="plotly_white",
             )
-            fig_bar.update_traces(textposition="outside", marker_cornerradius=4)
+            fig_bar.update_traces(textposition="outside", marker_cornerradius=4, cliponaxis=False)
             fig_bar.update_layout(
                 coloraxis_showscale=False,
                 yaxis_title="Jumlah Transaksi",
