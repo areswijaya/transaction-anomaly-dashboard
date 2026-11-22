@@ -54,11 +54,27 @@ CLUSTER_RECOMMENDATIONS = {
     ),
 }
 
-K_EVALUATION = pd.DataFrame({
+K_EVALUATION_FALLBACK = pd.DataFrame({
     "k": [2, 3, 4, 5, 6, 7, 8],
     "Inertia": [9813.20, 8156.22, 7027.95, 6061.49, 5265.85, 4759.72, 4368.32],
     "Silhouette Score": [0.2634, 0.2339, 0.2342, 0.2380, 0.2531, 0.2567, 0.2328],
 })
+
+
+
+@st.cache_data
+def load_k_evaluation():
+    """Baca hasil Elbow/Silhouette dari notebook (models/k_evaluation.csv); fallback ke nilai statis."""
+    path = BASE_DIR / "models" / "k_evaluation.csv"
+    try:
+        evaluation = pd.read_csv(path)
+        required = {"k", "Inertia", "Silhouette Score"}
+        if required.issubset(evaluation.columns) and not evaluation.empty:
+            return evaluation[["k", "Inertia", "Silhouette Score"]]
+    except (FileNotFoundError, pd.errors.ParserError, pd.errors.EmptyDataError):
+        pass
+    return K_EVALUATION_FALLBACK
+
 
 PRESET_SCENARIOS = {
     "Manual / Kustom": {
@@ -507,7 +523,8 @@ def render_tab_anomaly(filtered_df):
     st.subheader("Deteksi Anomali Multivariat (Ensemble 3 Model + Risiko Login)")
     st.caption(
         "Menggabungkan Isolation Forest, Local Outlier Factor, dan PCA Reconstruction Error "
-        "pada 8 fitur (termasuk Days_Since_Prev_Tx dan Amount_Per_Second), tanpa label fraud asli."
+        "pada 8 fitur (termasuk Days_Since_Prev_Tx dan Amount_Per_Second), tanpa label fraud asli. "
+        "Hasilnya penanda kandidat untuk ditinjau, bukan vonis fraud."
     )
 
     filter_mode = st.selectbox(
@@ -814,11 +831,14 @@ def render_tab_eval(df, scaler_km, kmeans, anomaly_bundle):
     st.subheader("Evaluasi Model Unsupervised & Keterbatasan")
     st.caption("Evaluasi konsensus 3 detektor anomali pada 8 fitur serta seleksi cluster K-Means.")
 
+    k_evaluation = load_k_evaluation()
+    silhouette_k2 = float(k_evaluation.loc[k_evaluation["k"] == 2, "Silhouette Score"].iloc[0])
+    contamination = anomaly_bundle.get("contamination", 0.05)
     consensus_count = int((df["Anomaly_Votes"] >= 2).sum())
     met1, met2, met3, met4 = st.columns(4)
     with met1:
         with st.container(border=True):
-            st.metric("K-Means (k=2) Silhouette", "0.2634")
+            st.metric("K-Means (k=2) Silhouette", f"{silhouette_k2:.4f}")
     with met2:
         with st.container(border=True):
             st.metric(
@@ -871,7 +891,7 @@ def render_tab_eval(df, scaler_km, kmeans, anomaly_bundle):
     with st.expander("Evaluasi Jumlah Cluster K-Means (k = 2..8)"):
         k_col1, k_col2 = st.columns(2)
         fig_elbow = px.line(
-            K_EVALUATION, x="k", y="Inertia", markers=True,
+            k_evaluation, x="k", y="Inertia", markers=True,
             title="Inertia per k (Elbow Method)", template="plotly_white",
         )
         fig_elbow.update_traces(line_color="#1D4ED8")
@@ -879,7 +899,7 @@ def render_tab_eval(df, scaler_km, kmeans, anomaly_bundle):
         k_col1.plotly_chart(fig_elbow, width="stretch")
 
         fig_sil = px.line(
-            K_EVALUATION, x="k", y="Silhouette Score", markers=True,
+            k_evaluation, x="k", y="Silhouette Score", markers=True,
             title="Silhouette Score per k", template="plotly_white",
         )
         fig_sil.update_traces(line_color="#1D4ED8")
@@ -896,9 +916,15 @@ def render_tab_eval(df, scaler_km, kmeans, anomaly_bundle):
     st.warning(
         "Keterbatasan Metodologi & Sumber Data:\n"
         "- Tanpa label fraud asli (ground truth): seluruh model bersifat unsupervised, "
-        "sehingga precision dan recall terhadap fraud nyata tidak dapat dihitung.\n"
-        "- Pemisahan K-Means lemah: Silhouette Score = 0.2634 (k = 2) menandakan batas segmen "
+        "sehingga precision dan recall terhadap fraud nyata tidak dapat dihitung. "
+        "Konsensus antar-model hanya menunjukkan kesepakatan, bukan kebenaran.\n"
+        f"- Pemisahan K-Means lemah: Silhouette Score = {silhouette_k2:.4f} (k = 2) menandakan batas segmen "
         "perilaku masih tumpang tindih; deteksi anomali dipisahkan memakai ensemble 3 detektor multivariat.\n"
+        f"- Jumlah anomali mengikuti pilihan contamination = {contamination:.2f}, bukan temuan data. "
+        "Uji sensitivitas ada di notebook (bagian 7.1).\n"
+        "- Days_Since_Prev_Tx: pada data sintetis ini TransactionDate hanya mencakup rentang sempit, "
+        "sehingga fitur tersebut praktis mencerminkan PreviousTransactionDate, bukan perilaku jeda yang bermakna.\n"
+        "- LoginAttempts ikut menjadi fitur anomali, sehingga Risiko Login dan skor anomali saling tumpang tindih.\n"
         "- Sumber data: dataset latihan Dicoding (adaptasi Kaggle Bank Transaction Dataset for Fraud Detection, "
         "berisi data sintetis kota-kota AS dalam satuan USD)."
     )
