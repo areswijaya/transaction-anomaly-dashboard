@@ -142,6 +142,8 @@ class TestTransactionAnomalyPipeline(unittest.TestCase):
         app_text = (ROOT_DIR / "app.py").read_text(encoding="utf-8")
         for slop_marker in ["hero-badge", "CREATED BY", "linear-gradient"]:
             self.assertNotIn(slop_marker, app_text)
+        self.assertIn(".page-header h1", app_text)
+        self.assertIn("color: #F8FAFC !important;", app_text)
 
         nb = json.loads((ROOT_DIR / "notebooks" / "clustering.ipynb").read_text(encoding="utf-8"))
         for cell in nb["cells"]:
@@ -151,7 +153,10 @@ class TestTransactionAnomalyPipeline(unittest.TestCase):
         # WCAG AA text (>= 4.5:1) and non-text border (>= 3.0:1) checks
         text_pairs = [
             ("#F8FAFC", "#0F172A"),
-            ("#CBD5E1", "#0F172A"),
+            ("#E2E8F0", "#0F172A"),
+            ("#CBD5E1", "#1E293B"),
+            ("#F8FAFC", "#1E293B"),
+            ("#334155", "#FFFFFF"),
             ("#0F172A", "#F8FAFC"),
             ("#475569", "#FFFFFF"),
             ("#1D4ED8", "#FFFFFF"),
