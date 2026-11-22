@@ -1,51 +1,52 @@
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.model_selection import train_test_split
 
 BASE_DIR = Path(__file__).resolve().parent
-
-CLUSTER_COLORS = {
-    "0 - Nasabah Mapan Konservatif": "#2563EB",
-    "1 - Nasabah Muda Aktif": "#D97706",
-    "2 - Transaksi Berisiko": "#DC2626",
-}
-
-CLUSTER_GRADIENTS = {
-    "blue": ["#93C5FD", "#3B82F6", "#1D4ED8"],
-    "matrix_blue": ["#EFF6FF", "#60A5FA", "#1D4ED8"],
-    "red": ["#FCA5A5", "#EF4444", "#B91C1C"],
-}
+LOGIN_RISK_THRESHOLD = 3
 
 CLUSTERING_FEATURES = [
     "TransactionAmount",
     "CustomerAge",
     "TransactionDuration",
-    "LoginAttempts",
     "AccountBalance",
     "Balance_Ratio",
 ]
 
 CLUSTER_LABELS = {
-    0: "0 - Nasabah Mapan Konservatif",
-    1: "1 - Nasabah Muda Aktif",
-    2: "2 - Transaksi Berisiko",
+    0: "0 - Nasabah Muda Aktif",
+    1: "1 - Nasabah Mapan Konservatif",
+}
+
+CLUSTER_COLORS = {
+    "0 - Nasabah Muda Aktif": "#D97706",
+    "1 - Nasabah Mapan Konservatif": "#2563EB",
+}
+
+CLUSTER_GRADIENTS = {
+    "blue": ["#93C5FD", "#3B82F6", "#1D4ED8"],
+    "red": ["#FCA5A5", "#EF4444", "#B91C1C"],
 }
 
 CLUSTER_RECOMMENDATIONS = {
-    0: "Transaksi normal. Rekomendasikan deposito, obligasi, atau reksa dana risiko rendah.",
-    1: "Transaksi normal (penarikan aktif). Rekomendasikan auto-debit, fitur budget, atau cashback.",
-    2: "ANOMALI LOGIN: Wajibkan verifikasi OTP/2FA dan kirim peringatan keamanan ke nasabah.",
+    0: (
+        "Profil transaksi aktif dengan porsi penarikan tinggi terhadap saldo. "
+        "Pertimbangkan fitur auto-debit, batas anggaran, atau promo cashback."
+    ),
+    1: (
+        "Profil saldo tinggi dan transaksi konservatif. "
+        "Pertimbangkan produk deposito, obligasi, atau reksa dana risiko rendah."
+    ),
 }
 
 K_EVALUATION = pd.DataFrame({
     "k": [2, 3, 4, 5, 6, 7, 8],
-    "Inertia": [12329.12, 10169.29, 8589.45, 7503.40, 6536.45, 5778.12, 5276.25],
-    "Silhouette Score": [0.2445, 0.2657, 0.2352, 0.2346, 0.2394, 0.2521, 0.2553],
+    "Inertia": [9813.20, 8156.22, 7027.95, 6061.49, 5265.85, 4759.72, 4368.32],
+    "Silhouette Score": [0.2634, 0.2339, 0.2342, 0.2380, 0.2531, 0.2567, 0.2328],
 })
 
 PRESET_SCENARIOS = {
@@ -55,55 +56,46 @@ PRESET_SCENARIOS = {
         "TransactionDuration": 110,
         "CustomerAge": 35,
         "LoginAttempts": 1,
-        "CustomerOccupation": "Engineer",
-        "Channel": "Branch",
-        "TransactionType": "Debit",
     },
-    "Contoh 1: Nasabah Mapan Konservatif (Cluster 0)": {
+    "Contoh 1: Nasabah Muda Aktif (Cluster 0)": {
+        "TransactionAmount": 350.0,
+        "AccountBalance": 1200.0,
+        "TransactionDuration": 120,
+        "CustomerAge": 25,
+        "LoginAttempts": 1,
+    },
+    "Contoh 2: Nasabah Mapan Konservatif (Cluster 1)": {
         "TransactionAmount": 250.0,
-        "AccountBalance": 8500.0,
-        "TransactionDuration": 110,
-        "CustomerAge": 58,
+        "AccountBalance": 7500.0,
+        "TransactionDuration": 115,
+        "CustomerAge": 56,
         "LoginAttempts": 1,
-        "CustomerOccupation": "Retired",
-        "Channel": "Branch",
-        "TransactionType": "Debit",
     },
-    "Contoh 2: Nasabah Muda Aktif (Cluster 1)": {
-        "TransactionAmount": 420.0,
-        "AccountBalance": 950.0,
-        "TransactionDuration": 95,
-        "CustomerAge": 22,
-        "LoginAttempts": 1,
-        "CustomerOccupation": "Student",
-        "Channel": "Online",
-        "TransactionType": "Debit",
-    },
-    "Contoh 3: Transaksi Berisiko (Cluster 2)": {
+    "Contoh 3: Risiko Login Tinggi (LoginAttempts >= 3)": {
         "TransactionAmount": 310.0,
         "AccountBalance": 5200.0,
-        "TransactionDuration": 140,
+        "TransactionDuration": 130,
         "CustomerAge": 45,
         "LoginAttempts": 4,
-        "CustomerOccupation": "Doctor",
-        "Channel": "Online",
-        "TransactionType": "Debit",
     },
 }
 
 
 @st.cache_data
 def load_data():
-    """Muat dataset hasil clustering dan seragamkan label segmen tampilan."""
+    """Muat dataset hasil clustering dan seragamkan label segmen serta flag risiko login."""
     data = pd.read_csv(BASE_DIR / "data" / "data_clustering_clean.csv")
     data["Segment_Name"] = data["Cluster"].map(CLUSTER_LABELS)
+    data["High_Login_Risk"] = data["LoginAttempts"] >= LOGIN_RISK_THRESHOLD
     return data
 
 
 @st.cache_resource
-def load_model():
-    """Muat pipeline model klasifikasi Random Forest."""
-    return joblib.load(BASE_DIR / "models" / "rf_classifier_pipeline.joblib")
+def load_clustering_models():
+    """Muat StandardScaler dan model K-Means clustering."""
+    scaler = joblib.load(BASE_DIR / "models" / "scaler_clustering.joblib")
+    kmeans = joblib.load(BASE_DIR / "models" / "kmeans_model.joblib")
+    return scaler, kmeans
 
 
 @st.cache_data
@@ -112,31 +104,39 @@ def get_feature_bounds(_df):
     return _df[CLUSTERING_FEATURES].min(), _df[CLUSTERING_FEATURES].max()
 
 
-@st.cache_data
-def evaluate_model(_df, _model):
-    """Hitung metrik pada data uji (20% stratified split, random_state=42)."""
-    features = _df.drop(columns=["Cluster", "Segment_Name", "Location"])
-    target = _df["Cluster"]
-    _, x_test, _, y_test = train_test_split(
-        features, target, test_size=0.2, random_state=42, stratify=target
-    )
-    y_pred = _model.predict(x_test)
-    report = classification_report(y_test, y_pred, output_dict=True, digits=4)
-    matrix = confusion_matrix(y_test, y_pred, labels=[0, 1, 2])
-    return report, matrix
+def predict_transaction(
+    tx_amount,
+    acc_balance,
+    tx_duration,
+    cust_age,
+    login_attempts,
+    scaler,
+    kmeans,
+):
+    """Petakan transaksi ke segmen K-Means dan evaluasi aturan risiko login eksplisit."""
+    balance_ratio = float(tx_amount / acc_balance) if acc_balance > 0 else 0.0
+    input_df = pd.DataFrame([{
+        "TransactionAmount": float(tx_amount),
+        "CustomerAge": float(cust_age),
+        "TransactionDuration": float(tx_duration),
+        "AccountBalance": float(acc_balance),
+        "Balance_Ratio": balance_ratio,
+    }])[CLUSTERING_FEATURES]
 
-
-@st.cache_data
-def get_feature_importance(_model):
-    """Ambil feature importance Random Forest dengan nama fitur bersih."""
-    raw_names = _model.named_steps["preprocessor"].get_feature_names_out()
-    clean_names = [n.replace("num__", "").replace("cat__", "") for n in raw_names]
-    importances = _model.named_steps["classifier"].feature_importances_
-    return (
-        pd.DataFrame({"Fitur": clean_names, "Importance": importances})
-        .sort_values("Importance", ascending=False)
-        .reset_index(drop=True)
-    )
+    scaled = scaler.transform(input_df)
+    scaled_df = pd.DataFrame(scaled, columns=CLUSTERING_FEATURES)
+    cluster = int(kmeans.predict(scaled_df)[0])
+    centroid_distances = {
+        CLUSTER_LABELS[i]: float(np.linalg.norm(scaled[0] - center))
+        for i, center in enumerate(kmeans.cluster_centers_)
+    }
+    return {
+        "cluster": cluster,
+        "segment_name": CLUSTER_LABELS[cluster],
+        "is_high_login_risk": bool(login_attempts >= LOGIN_RISK_THRESHOLD),
+        "balance_ratio": balance_ratio,
+        "centroid_distances": centroid_distances,
+    }
 
 
 def reset_filters(all_occupations, all_channels, all_types):
@@ -160,7 +160,9 @@ def render_sidebar(df):
     st.session_state.setdefault("filter_location", [])
 
     st.sidebar.header("Filter Data")
-    st.sidebar.caption("Berlaku pada tab Ringkasan, Visualisasi Cluster, dan Transaksi Berisiko.")
+    st.sidebar.caption(
+        "Berlaku pada tab Ringkasan, Visualisasi Cluster, dan Risiko Login (Aturan)."
+    )
 
     selected_occupations = st.sidebar.multiselect(
         "Profesi", options=all_occupations, key="filter_occupation"
@@ -213,7 +215,7 @@ def render_sidebar(df):
 
 
 def build_summary_table(filtered_df):
-    """Hitung ringkasan profil per segmen dengan konsistensi 3 segmen."""
+    """Hitung ringkasan profil per segmen dengan konsistensi 2 segmen."""
     total_tx = len(filtered_df)
     summary = (
         filtered_df.groupby("Segment_Name")
@@ -230,7 +232,9 @@ def build_summary_table(filtered_df):
         .rename_axis("Segment_Name")
         .reset_index()
     )
-    summary["Persentase (%)"] = (summary["Jumlah_Transaksi"] / total_tx) * 100
+    summary["Persentase (%)"] = (
+        (summary["Jumlah_Transaksi"] / total_tx) * 100 if total_tx > 0 else 0.0
+    )
     return summary
 
 
@@ -241,8 +245,8 @@ def render_tab_summary(filtered_df):
     total_tx = len(filtered_df)
     avg_amount = filtered_df["TransactionAmount"].mean()
     avg_balance = filtered_df["AccountBalance"].mean()
-    risk_tx = int((filtered_df["Cluster"] == 2).sum())
-    risk_pct = (risk_tx / total_tx) * 100
+    risk_tx = int(filtered_df["High_Login_Risk"].sum())
+    risk_pct = (risk_tx / total_tx) * 100 if total_tx > 0 else 0.0
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -256,7 +260,7 @@ def render_tab_summary(filtered_df):
             st.metric("Rata-Rata Saldo", f"${avg_balance:,.2f}")
     with col4:
         with st.container(border=True):
-            st.metric("Transaksi Berisiko (Cluster 2)", f"{risk_tx:,} ({risk_pct:.2f}%)")
+            st.metric("Risiko Login (>= 3x)", f"{risk_tx:,} ({risk_pct:.2f}%)")
 
     summary_table = build_summary_table(filtered_df)
     chart_col1, chart_col2 = st.columns(2)
@@ -351,7 +355,7 @@ def render_tab_summary(filtered_df):
 
 def render_tab_cluster(filtered_df, df):
     """Render tab Visualisasi Cluster dengan scatter plot interaktif, radar chart, dan profil."""
-    st.subheader("Visualisasi & Profil Cluster")
+    st.subheader("Visualisasi & Profil Cluster (5 Fitur Perilaku)")
 
     vis_col1, vis_col2 = st.columns([1.35, 1])
 
@@ -370,8 +374,7 @@ def render_tab_cluster(filtered_df, df):
                 index=CLUSTERING_FEATURES.index("TransactionAmount"),
             )
 
-            # Urutkan Cluster agar titik Cluster 2 (merah) berada paling atas
-            scatter_df = filtered_df.sort_values("Cluster")
+            scatter_df = filtered_df.sort_values("Cluster", ascending=False)
             fig_scatter = px.scatter(
                 scatter_df,
                 x=x_axis,
@@ -379,7 +382,8 @@ def render_tab_cluster(filtered_df, df):
                 color="Segment_Name",
                 color_discrete_map=CLUSTER_COLORS,
                 category_orders={"Segment_Name": list(CLUSTER_COLORS.keys())},
-                hover_data=CLUSTERING_FEATURES + ["CustomerOccupation", "Channel", "TransactionType"],
+                hover_data=CLUSTERING_FEATURES
+                + ["LoginAttempts", "CustomerOccupation", "Channel", "TransactionType"],
                 opacity=0.82,
                 template="plotly_white",
             )
@@ -421,38 +425,45 @@ def render_tab_cluster(filtered_df, df):
             )
             st.plotly_chart(fig_radar, width="stretch")
 
+    st.info(
+        "Catatan pemisahan fitur: `LoginAttempts` sengaja dikeluarkan dari proses K-Means "
+        "agar segmen merefleksikan perilaku transaksi, sedangkan `LoginAttempts >= 3` "
+        "ditangani terpisah sebagai aturan risiko eksplisit."
+    )
+
     st.markdown("**Interpretasi & Rekomendasi Bisnis (Data Keseluruhan)**")
-    exp_col1, exp_col2, exp_col3 = st.columns(3)
+    exp_col1, exp_col2 = st.columns(2)
     with exp_col1:
-        with st.expander("0 - Nasabah Mapan Konservatif (63.43%)", expanded=True):
+        with st.expander("0 - Nasabah Muda Aktif (34.30%)", expanded=True):
             st.write(
-                "**Profil:** Usia `53.67` thn (dominan `Retired`), saldo `$6,933.26`, "
-                "transaksi `$272.13`, `Balance_Ratio` `0.05`, login `1.01`."
+                "**Profil:** `863` transaksi. Rata-rata usia `27.30` thn (dominan `Student`), "
+                "saldo `$1,584.53`, transaksi `$347.07`, `Balance_Ratio` `0.47`."
             )
-            st.write("**Tindakan:** Tawarkan deposito, obligasi, atau reksa dana risiko rendah.")
+            st.write(
+                "**Tindakan:** Tawarkan fitur auto-debit, batas anggaran, atau promo cashback."
+            )
     with exp_col2:
-        with st.expander("1 - Nasabah Muda Aktif (32.87%)", expanded=True):
+        with st.expander("1 - Nasabah Mapan Konservatif (65.70%)", expanded=True):
             st.write(
-                "**Profil:** Usia `27.25` thn (dominan `Student`), saldo `$1,578.34`, "
-                "transaksi `$347.13`, `Balance_Ratio` `0.48`, login `1.01`."
+                "**Profil:** `1,653` transaksi. Rata-rata usia `53.71` thn (dominan `Retired`), "
+                "saldo `$6,955.81`, transaksi `$270.63`, `Balance_Ratio` `0.05`."
             )
-            st.write("**Tindakan:** Tawarkan auto-debit, fitur budget, atau promo cashback.")
-    with exp_col3:
-        with st.expander("2 - Transaksi Berisiko (3.70%)", expanded=True):
             st.write(
-                "**Profil:** Anomali upaya login `3-5` kali (`4.00`), durasi `130.77` dtk, "
-                "saldo `$5,318.53`, dominan `Doctor` & `Online`."
+                "**Tindakan:** Tawarkan deposito, obligasi, atau reksa dana risiko rendah."
             )
-            st.write("**Tindakan:** Wajibkan verifikasi OTP/2FA, notifikasi instan, dan audit.")
 
 
 def render_tab_risk(filtered_df):
-    """Render tab Transaksi Berisiko untuk memantau Cluster 2 dan mengunduh CSV."""
-    st.subheader("Analisis Transaksi Berisiko (Cluster 2)")
-    st.caption("Segmen ini mengisolasi transaksi dengan anomali upaya login berulang (3-5 kali).")
+    """Render tab Risiko Login (Aturan) untuk memantau LoginAttempts >= 3 dan mengunduh CSV."""
+    st.subheader("Indikator Risiko Login Berbasis Aturan (LoginAttempts >= 3)")
+    st.caption(
+        "Filter aturan eksplisit untuk transaksi dengan upaya login berulang (3-5 kali). "
+        "Ini bukan deteksi fraud tervalidasi karena dataset sintetis tidak memiliki label fraud asli."
+    )
 
-    risk_df = filtered_df[filtered_df["Cluster"] == 2]
+    risk_df = filtered_df[filtered_df["High_Login_Risk"]]
     risk_columns = [
+        "Segment_Name",
         "TransactionAmount",
         "AccountBalance",
         "Balance_Ratio",
@@ -493,16 +504,16 @@ def render_tab_risk(filtered_df):
         with st.container(border=True):
             hdr_col1, hdr_col2 = st.columns([1.4, 1])
             with hdr_col1:
-                st.markdown("**Sebaran Cluster 2 (Top 10)**")
+                st.markdown("**Sebaran Risiko Login >= 3 (Top 10)**")
             with hdr_col2:
                 group_by = st.selectbox(
                     "Kelompokkan",
-                    options=["Channel", "Location", "CustomerOccupation"],
+                    options=["Segment_Name", "Channel", "Location", "CustomerOccupation"],
                     label_visibility="collapsed",
                 )
 
             if risk_df.empty:
-                st.info("Tidak ada transaksi berisiko pada filter aktif.")
+                st.info("Tidak ada transaksi dengan LoginAttempts >= 3 pada filter aktif.")
             else:
                 risk_counts = (
                     risk_df.groupby(group_by)
@@ -533,27 +544,30 @@ def render_tab_risk(filtered_df):
     with st.container(border=True):
         tbl_col1, tbl_col2 = st.columns([3, 1])
         with tbl_col1:
-            st.markdown(f"**Daftar Transaksi Berisiko ({len(risk_df):,} data)**")
+            st.markdown(f"**Daftar Transaksi Risiko Login >= 3 ({len(risk_df):,} data)**")
         with tbl_col2:
             if not risk_df.empty:
                 st.download_button(
                     label="Unduh CSV",
                     data=risk_df[risk_columns].to_csv(index=False).encode("utf-8"),
-                    file_name="transaksi_berisiko.csv",
+                    file_name="risiko_login_tinggi.csv",
                     mime="text/csv",
                     width="stretch",
                 )
 
         if risk_df.empty:
-            st.info("Tidak ada transaksi berisiko (Cluster 2) pada filter aktif.")
+            st.info("Tidak ada transaksi dengan LoginAttempts >= 3 pada filter aktif.")
         else:
             st.dataframe(risk_df[risk_columns].round(2), width="stretch", hide_index=True)
 
 
-def render_tab_predict(df, model):
-    """Render tab Prediksi Transaksi Baru menggunakan pipeline Random Forest."""
-    st.subheader("Prediksi Transaksi Baru (Random Forest)")
-    st.caption("Pilih skenario contoh atau ubah parameter untuk menguji prediksi segmen.")
+def render_tab_predict(df, scaler, kmeans):
+    """Render tab Simulasi & Cek Risiko langsung memakai K-Means dan aturan login."""
+    st.subheader("Simulasi Segmen (K-Means) & Cek Risiko Login")
+    st.caption(
+        "Menghitung segmen perilaku langsung dengan StandardScaler + K-Means (`k = 2`), "
+        "lalu mengecek aturan `LoginAttempts >= 3` secara terpisah."
+    )
 
     preset_choice = st.selectbox(
         "Skenario Contoh",
@@ -562,13 +576,9 @@ def render_tab_predict(df, model):
     )
     preset_vals = PRESET_SCENARIOS[preset_choice]
 
-    occ_options = sorted(df["CustomerOccupation"].unique())
-    ch_options = sorted(df["Channel"].unique())
-    type_options = sorted(df["TransactionType"].unique())
-
     with st.container(border=True):
         with st.form("prediction_form"):
-            form_col1, form_col2, form_col3 = st.columns(3)
+            form_col1, form_col2 = st.columns(2)
 
             with form_col1:
                 tx_amount = st.number_input(
@@ -581,7 +591,7 @@ def render_tab_predict(df, model):
                 )
                 acc_balance = st.number_input(
                     "Saldo Akun ($)",
-                    min_value=float(df["AccountBalance"].min()),
+                    min_value=0.0,
                     max_value=float(df["AccountBalance"].max()),
                     value=float(preset_vals["AccountBalance"]),
                     step=100.0,
@@ -613,200 +623,152 @@ def render_tab_predict(df, model):
                     step=1,
                     key=f"login_attempts_{preset_choice}",
                 )
-                cust_occupation = st.selectbox(
-                    "Profesi",
-                    options=occ_options,
-                    index=occ_options.index(preset_vals["CustomerOccupation"]),
-                    key=f"cust_occupation_{preset_choice}",
-                )
 
-            with form_col3:
-                tx_channel = st.selectbox(
-                    "Kanal",
-                    options=ch_options,
-                    index=ch_options.index(preset_vals["Channel"]),
-                    key=f"tx_channel_{preset_choice}",
-                )
-                tx_type = st.selectbox(
-                    "Tipe Transaksi",
-                    options=type_options,
-                    index=type_options.index(preset_vals["TransactionType"]),
-                    key=f"tx_type_{preset_choice}",
-                )
-
-            submitted = st.form_submit_button("Prediksi Segmen", width="stretch")
+            submitted = st.form_submit_button("Hitung Segmen & Cek Risiko", width="stretch")
 
     if submitted:
-        balance_ratio = tx_amount / acc_balance if acc_balance > 0 else 0.0
-        input_df = pd.DataFrame([{
-            "TransactionAmount": tx_amount,
-            "TransactionType": tx_type,
-            "Channel": tx_channel,
-            "CustomerAge": cust_age,
-            "CustomerOccupation": cust_occupation,
-            "TransactionDuration": tx_duration,
-            "LoginAttempts": login_attempts,
-            "AccountBalance": acc_balance,
-            "Balance_Ratio": balance_ratio,
-        }])
-
         try:
-            pred_cluster = int(model.predict(input_df)[0])
-            proba_values = model.predict_proba(input_df)[0]
-            class_list = [int(c) for c in model.classes_]
+            result = predict_transaction(
+                tx_amount=tx_amount,
+                acc_balance=acc_balance,
+                tx_duration=tx_duration,
+                cust_age=cust_age,
+                login_attempts=login_attempts,
+                scaler=scaler,
+                kmeans=kmeans,
+            )
         except Exception as err:
-            st.error(f"Prediksi gagal dijalankan. Detail: {err}")
+            st.error(f"Simulasi gagal dijalankan. Detail: {err}")
             return
 
-        pred_proba = float(proba_values[class_list.index(pred_cluster)]) * 100
-        pred_label = CLUSTER_LABELS[pred_cluster]
+        pred_cluster = result["cluster"]
+        pred_label = result["segment_name"]
+        is_risk = result["is_high_login_risk"]
+        risk_status = "Tinggi (>= 3x)" if is_risk else "Normal (< 3x)"
 
         res_col1, res_col2, res_col3 = st.columns(3)
         with res_col1:
             with st.container(border=True):
-                st.metric("Segmen Prediksi", pred_label)
+                st.metric("Segmen K-Means", pred_label)
         with res_col2:
             with st.container(border=True):
-                st.metric("Confidence", f"{pred_proba:.2f}%")
+                st.metric("Status Risiko Login", risk_status)
         with res_col3:
             with st.container(border=True):
-                st.metric("Balance Ratio", f"{balance_ratio:.2f}")
+                st.metric("Balance Ratio", f"{result['balance_ratio']:.2f}")
 
-        if pred_cluster == 2:
-            st.error(CLUSTER_RECOMMENDATIONS[pred_cluster])
+        if is_risk:
+            st.warning(
+                "Aturan Risiko Login Aktif (`LoginAttempts >= 3`): Wajibkan verifikasi OTP/2FA "
+                "dan tinjau aktivitas akses. Catatan: indikator ini berbasis aturan eksplisit, "
+                "bukan prediksi fraud tervalidasi."
+            )
         else:
-            st.success(CLUSTER_RECOMMENDATIONS[pred_cluster])
+            st.success("Status Login Normal (`LoginAttempts < 3`).")
+
+        st.info(f"Rekomendasi segmen: {CLUSTER_RECOMMENDATIONS[pred_cluster]}")
 
         with st.container(border=True):
-            st.markdown("**Probabilitas per Segmen**")
-            proba_df = pd.DataFrame({
-                "Segmen": [CLUSTER_LABELS[c] for c in class_list],
-                "Probabilitas (%)": [p * 100 for p in proba_values],
+            st.markdown("**Jarak Euclidean ke Centroid (Skala Standar — lebih kecil berarti lebih dekat)**")
+            dist_df = pd.DataFrame({
+                "Segmen": list(result["centroid_distances"].keys()),
+                "Jarak ke Centroid": list(result["centroid_distances"].values()),
             })
-            fig_proba = px.bar(
-                proba_df,
-                x="Probabilitas (%)",
+            max_dist = max(dist_df["Jarak ke Centroid"].max(), 1.0)
+            fig_dist = px.bar(
+                dist_df,
+                x="Jarak ke Centroid",
                 y="Segmen",
                 orientation="h",
                 color="Segmen",
                 color_discrete_map=CLUSTER_COLORS,
-                text=proba_df["Probabilitas (%)"].map("{:.1f}%".format),
+                text=dist_df["Jarak ke Centroid"].map("{:.3f}".format),
                 template="plotly_white",
             )
-            fig_proba.update_traces(marker_cornerradius=4)
-            fig_proba.update_layout(
+            fig_dist.update_traces(marker_cornerradius=4)
+            fig_dist.update_layout(
                 showlegend=False,
-                xaxis_range=[0, 105],
+                xaxis_range=[0, max_dist * 1.2],
                 yaxis_title="",
                 margin=dict(t=15, b=15, l=15, r=20),
-                height=240,
+                height=220,
             )
-            st.plotly_chart(fig_proba, width="stretch")
+            st.plotly_chart(fig_dist, width="stretch")
 
 
-def render_tab_eval(df, model):
-    """Render tab Evaluasi Model untuk Random Forest dan seleksi K-Means."""
-    st.subheader("Evaluasi Model")
-    st.caption("Random Forest dievaluasi pada 20% data uji (504 transaksi, stratified split).")
+def render_tab_eval(scaler, kmeans):
+    """Render tab Evaluasi & Keterbatasan untuk pemilihan K-Means dan transparansi metodologi."""
+    st.subheader("Evaluasi K-Means & Keterbatasan Metodologi")
+    st.caption(
+        "Pemilihan jumlah cluster dievaluasi pada 2,516 transaksi menggunakan 5 fitur perilaku "
+        "(tanpa `LoginAttempts`)."
+    )
 
-    try:
-        report, matrix = evaluate_model(df, model)
-    except Exception as err:
-        st.error(f"Evaluasi model gagal dihitung. Detail: {err}")
-    else:
-        met1, met2, met3, met4 = st.columns(4)
-        with met1:
-            with st.container(border=True):
-                st.metric("Akurasi Uji", f"{report['accuracy'] * 100:.2f}%")
-        with met2:
-            with st.container(border=True):
-                st.metric("Precision (Macro)", f"{report['macro avg']['precision'] * 100:.2f}%")
-        with met3:
-            with st.container(border=True):
-                st.metric("Recall (Macro)", f"{report['macro avg']['recall'] * 100:.2f}%")
-        with met4:
-            with st.container(border=True):
-                st.metric("F1-Score (Macro)", f"{report['macro avg']['f1-score'] * 100:.2f}%")
+    k2_row = K_EVALUATION.loc[K_EVALUATION["k"] == 2].iloc[0]
 
-        eval_vis_col1, eval_vis_col2 = st.columns(2)
-
-        with eval_vis_col1:
-            with st.container(border=True):
-                st.markdown("**Confusion Matrix**")
-                fig_cm = px.imshow(
-                    matrix,
-                    x=[f"Cluster {i}" for i in range(3)],
-                    y=[f"Cluster {i}" for i in range(3)],
-                    text_auto=True,
-                    color_continuous_scale=CLUSTER_GRADIENTS["matrix_blue"],
-                    labels=dict(x="Prediksi", y="Aktual", color="Jumlah"),
-                    template="plotly_white",
-                )
-                fig_cm.update_layout(margin=dict(t=20, b=20, l=20, r=20), height=360)
-                st.plotly_chart(fig_cm, width="stretch")
-
-        with eval_vis_col2:
-            with st.container(border=True):
-                st.markdown("**10 Fitur Paling Berpengaruh**")
-                try:
-                    feat_imp = get_feature_importance(model).head(10).iloc[::-1]
-                except Exception as err:
-                    st.info(f"Data pengaruh fitur tidak tersedia. Detail: {err}")
-                else:
-                    fig_imp = px.bar(
-                        feat_imp,
-                        x="Importance",
-                        y="Fitur",
-                        orientation="h",
-                        color="Importance",
-                        color_continuous_scale=CLUSTER_GRADIENTS["blue"],
-                        template="plotly_white",
-                    )
-                    fig_imp.update_traces(marker_cornerradius=4)
-                    fig_imp.update_layout(
-                        coloraxis_showscale=False,
-                        xaxis_title="Tingkat Pengaruh",
-                        yaxis_title="",
-                        margin=dict(t=20, b=20, l=20, r=20),
-                        height=360,
-                    )
-                    st.plotly_chart(fig_imp, width="stretch")
-
+    met1, met2, met3, met4 = st.columns(4)
+    with met1:
         with st.container(border=True):
-            st.markdown("**Metrik per Segmen**")
-            per_class = pd.DataFrame({
-                "Segmen": [CLUSTER_LABELS[i] for i in range(3)],
-                "Precision": [report[str(i)]["precision"] for i in range(3)],
-                "Recall": [report[str(i)]["recall"] for i in range(3)],
-                "F1-Score": [report[str(i)]["f1-score"] for i in range(3)],
-                "Data Uji": [int(report[str(i)]["support"]) for i in range(3)],
-            })
-            st.dataframe(per_class.round(4), width="stretch", hide_index=True)
+            st.metric("Jumlah Cluster (k)", "2")
+    with met2:
+        with st.container(border=True):
+            st.metric("Silhouette Score", f"{k2_row['Silhouette Score']:.4f}")
+    with met3:
+        with st.container(border=True):
+            st.metric("Inertia (WCSS)", f"{k2_row['Inertia']:,.2f}")
+    with met4:
+        with st.container(border=True):
+            st.metric("Fitur Clustering", str(len(CLUSTERING_FEATURES)))
 
-    with st.expander("Pemilihan Jumlah Cluster (K-Means)"):
-        st.write("Dipilih `k = 3` karena menghasilkan **Silhouette Score tertinggi (`0.2657`)**.")
-        eval_col1, eval_col2 = st.columns(2)
+    eval_col1, eval_col2 = st.columns(2)
 
-        fig_elbow = px.line(
-            K_EVALUATION, x="k", y="Inertia", markers=True,
-            title="Elbow Method (Inertia)", template="plotly_white",
-        )
-        fig_elbow.update_traces(
-            line_color="#2563EB", fill="tozeroy", fillcolor="rgba(37, 99, 235, 0.10)"
-        )
-        fig_elbow.add_vline(x=3, line_dash="dash", line_color="#DC2626")
-        eval_col1.plotly_chart(fig_elbow, width="stretch")
+    fig_elbow = px.line(
+        K_EVALUATION,
+        x="k",
+        y="Inertia",
+        markers=True,
+        title="Elbow Method (Inertia)",
+        template="plotly_white",
+    )
+    fig_elbow.update_traces(
+        line_color="#2563EB", fill="tozeroy", fillcolor="rgba(37, 99, 235, 0.10)"
+    )
+    fig_elbow.add_vline(x=2, line_dash="dash", line_color="#DC2626")
+    eval_col1.plotly_chart(fig_elbow, width="stretch")
 
-        fig_sil = px.line(
-            K_EVALUATION, x="k", y="Silhouette Score", markers=True,
-            title="Silhouette Score per k", template="plotly_white",
+    fig_sil = px.line(
+        K_EVALUATION,
+        x="k",
+        y="Silhouette Score",
+        markers=True,
+        title="Silhouette Score per k",
+        template="plotly_white",
+    )
+    fig_sil.update_traces(
+        line_color="#2563EB", fill="tozeroy", fillcolor="rgba(37, 99, 235, 0.10)"
+    )
+    fig_sil.add_vline(x=2, line_dash="dash", line_color="#DC2626")
+    eval_col2.plotly_chart(fig_sil, width="stretch")
+
+    st.dataframe(K_EVALUATION, width="stretch", hide_index=True)
+
+    with st.container(border=True):
+        st.markdown("**Centroid K-Means pada Skala Asli**")
+        centroids_orig = pd.DataFrame(
+            scaler.inverse_transform(kmeans.cluster_centers_),
+            columns=CLUSTERING_FEATURES,
         )
-        fig_sil.update_traces(
-            line_color="#2563EB", fill="tozeroy", fillcolor="rgba(37, 99, 235, 0.10)"
-        )
-        fig_sil.add_vline(x=3, line_dash="dash", line_color="#DC2626")
-        eval_col2.plotly_chart(fig_sil, width="stretch")
-        st.dataframe(K_EVALUATION, width="stretch", hide_index=True)
+        centroids_orig.insert(0, "Segmen", [CLUSTER_LABELS[i] for i in range(kmeans.n_clusters)])
+        st.dataframe(centroids_orig.round(2), width="stretch", hide_index=True)
+
+    st.warning(
+        "**Keterbatasan Metodologi & Sumber Data:**\n"
+        "- **Pemisahan cluster lemah:** `Silhouette Score = 0.2634` (tertinggi di `k = 2`, rentang "
+        "`k = 2..8`) menunjukkan batas segmen perilaku masih tumpang tindih.\n"
+        "- **Tidak ada label fraud asli (*ground truth*):** Kemampuan deteksi fraud tidak dapat diuji atau dibuktikan.\n"
+        "- **Indikator berbasis aturan:** `LoginAttempts >= 3` merupakan aturan ambang batas eksplisit, bukan prediksi *machine learning*.\n"
+        "- **Sumber data:** Dataset latihan Dicoding (adaptasi Kaggle *Bank Transaction Dataset for Fraud Detection* — data sintetis kota-kota AS dalam satuan USD)."
+    )
 
 
 def render_custom_styles_and_banner():
@@ -929,16 +891,16 @@ def render_custom_styles_and_banner():
     border-color: #2563EB;
 }
 [data-testid="stExpanderDetails"] {
-    min-height: 145px;
+    min-height: 135px;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
 }
 </style>
 <div class="hero-banner">
-<div class="hero-badge">FINTECH ANALYTICS &amp; ANOMALY DETECTION</div>
-<h1 class="hero-title">Segmentasi &amp; Deteksi Anomali Transaksi</h1>
-<p class="hero-subtitle">Analisis segmen nasabah (K-Means) dan prediksi transaksi baru (Random Forest).</p>
+<div class="hero-badge">TRANSACTION SEGMENTATION &amp; LOGIN RISK RULES</div>
+<h1 class="hero-title">Segmentasi Transaksi &amp; Indikator Risiko Login</h1>
+<p class="hero-subtitle">Segmentasi perilaku nasabah (K-Means, k = 2) dan filter risiko login berbasis aturan (LoginAttempts &gt;= 3).</p>
 </div>
         """,
         unsafe_allow_html=True,
@@ -948,12 +910,12 @@ def render_custom_styles_and_banner():
 def main():
     """Konfigurasi halaman dan jalankan alur utama dashboard."""
     st.set_page_config(
-        page_title="Dashboard Segmentasi & Deteksi Anomali Transaksi",
+        page_title="Dashboard Segmentasi Transaksi & Indikator Risiko Login",
         layout="wide",
     )
 
     df = load_data()
-    model = load_model()
+    scaler, kmeans = load_clustering_models()
 
     render_custom_styles_and_banner()
 
@@ -965,9 +927,9 @@ def main():
     tab_summary, tab_cluster, tab_risk, tab_predict, tab_eval = st.tabs([
         "Ringkasan",
         "Visualisasi Cluster",
-        "Transaksi Berisiko",
-        "Prediksi",
-        "Evaluasi Model",
+        "Risiko Login (Aturan)",
+        "Simulasi & Cek Risiko",
+        "Evaluasi & Keterbatasan",
     ])
 
     with tab_summary:
@@ -977,9 +939,9 @@ def main():
     with tab_risk:
         render_tab_risk(filtered_df)
     with tab_predict:
-        render_tab_predict(df, model)
+        render_tab_predict(df, scaler, kmeans)
     with tab_eval:
-        render_tab_eval(df, model)
+        render_tab_eval(scaler, kmeans)
 
 
 if __name__ == "__main__":
