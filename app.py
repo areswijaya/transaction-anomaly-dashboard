@@ -1014,7 +1014,7 @@ def render_custom_styles_and_banner(df):
         f"""
 <style>
 .block-container {{
-    padding-top: 1.5rem;
+    padding-top: 3.75rem !important;
 }}
 a[href], button, summary, select, [role="tab"] {{
     cursor: pointer;
@@ -1047,7 +1047,7 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
     margin-bottom: 1.15rem;
     display: flex;
     justify-content: space-between;
-    align-items: flex-end;
+    align-items: center;
     flex-wrap: wrap;
     gap: 16px;
 }}
