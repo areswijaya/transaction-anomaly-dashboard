@@ -133,15 +133,34 @@ class PipelineTest(unittest.TestCase):
             if cell["cell_type"] == "code":
                 self.assertEqual(cell.get("outputs", []), [])
 
+        nb_sources = "\n".join(
+            "".join(cell.get("source", [])) for cell in nb["cells"] if cell["cell_type"] == "code"
+        )
+        self.assertIn("ROOT_DIR", nb_sources)
+        self.assertIn("raw.xlsx", nb_sources)
+
+        self.assertTrue(set(CLUSTERING_FEATURES).issubset(app.FEATURE_LABELS))
+        self.assertNotEqual(app.format_feature_label("TransactionAmount"), "TransactionAmount")
+
+        devcontainer_raw = (BASE_DIR / ".devcontainer" / "devcontainer.json").read_text(encoding="utf-8")
+        self.assertNotIn("\u2705", devcontainer_raw)
+        devcontainer = json.loads(devcontainer_raw)
+        self.assertIsInstance(devcontainer, dict)
+
     def test_palette_contrast(self):
         text_pairs = [
             ("#F8FAFC", "#0F172A"),
             ("#E2E8F0", "#0F172A"),
+            ("#E2E8F0", "#1E293B"),
             ("#CBD5E1", "#1E293B"),
             ("#F8FAFC", "#1E293B"),
             ("#0F172A", "#F8FAFC"),
+            ("#0F172A", "#FFFFFF"),
+            ("#334155", "#FFFFFF"),
             ("#475569", "#FFFFFF"),
             ("#1D4ED8", "#FFFFFF"),
+            ("#1E3A8A", "#DBEAFE"),
+            ("#0F172A", "#BFDBFE"),
             ("#B45309", "#FFFFFF"),
             ("#B91C1C", "#FFFFFF"),
         ]

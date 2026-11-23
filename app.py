@@ -17,6 +17,28 @@ CLUSTERING_FEATURES = [
     "Balance_Ratio",
 ]
 
+FEATURE_LABELS = {
+    "TransactionAmount": "Nominal Transaksi (USD)",
+    "CustomerAge": "Usia Nasabah (tahun)",
+    "TransactionDuration": "Durasi Transaksi (detik)",
+    "AccountBalance": "Saldo Akun (USD)",
+    "Balance_Ratio": "Rasio Transaksi / Saldo",
+    "Amount_Per_Second": "Nominal per Detik (USD/dtk)",
+    "LoginAttempts": "Upaya Login",
+    "Anomaly_Score": "Skor Anomali (0-100)",
+    "Segment_Name": "Segmen",
+    "CustomerOccupation": "Profesi",
+    "Channel": "Kanal",
+    "TransactionType": "Tipe Transaksi",
+    "Location": "Kota",
+    "High_Login_Risk": "Risiko Login (>= 3)",
+    "Anomaly_Flag": "Ditandai Anomali",
+}
+
+
+def format_feature_label(col):
+    return FEATURE_LABELS.get(col, col)
+
 SEGMENT_COLORS = {
     "Nasabah Muda Aktif": "#B45309",
     "Nasabah Mapan Konservatif": "#1D4ED8",
@@ -104,6 +126,14 @@ def get_segment_map(df):
     return df.groupby("Cluster")["Segment_Name"].first().to_dict()
 
 
+def _normalize_anomaly_score(raw_value, score_bounds):
+    """Konversi skor mentah Isolation Forest ke skala 0-100 berdasarkan batas training."""
+    lo, hi = score_bounds
+    if hi <= lo:
+        return 0.0
+    return float(np.clip((raw_value - lo) / (hi - lo), 0.0, 1.0)) * 100.0
+
+
 def predict_transaction(
     amount,
     balance,
@@ -140,10 +170,9 @@ def predict_transaction(
     an_scaled = anomaly["scaler"].transform(an_row)
 
     raw = float(-anomaly["model"].decision_function(an_scaled)[0])
-    lo, hi = anomaly["score_bounds"]
-    score = 0.0 if hi <= lo else float(np.clip((raw - lo) / (hi - lo), 0.0, 1.0)) * 100.0
+    score = _normalize_anomaly_score(raw, anomaly["score_bounds"])
     # Isolation Forest menandai anomali saat -decision_function(x) > 0; konversi 0.0 ke skala 0-100.
-    thresh = 0.0 if hi <= lo else float(np.clip((0.0 - lo) / (hi - lo), 0.0, 1.0)) * 100.0
+    thresh = _normalize_anomaly_score(0.0, anomaly["score_bounds"])
     is_anomaly = bool(anomaly["model"].predict(an_scaled)[0] == -1)
 
     return {
@@ -157,12 +186,19 @@ def predict_transaction(
     }
 
 
-def render_styles_and_banner(df):
+def render_styles_and_banner(df, filtered=None):
     total_tx = len(df)
     anom_tx = int(df["Anomaly_Flag"].sum())
     anom_pct = (anom_tx / total_tx) * 100 if total_tx > 0 else 0.0
     risk_tx = int(df["High_Login_Risk"].sum())
     risk_pct = (risk_tx / total_tx) * 100 if total_tx > 0 else 0.0
+    filter_note_html = ""
+    if filtered is not None and len(filtered) != total_tx:
+        filter_note_html = (
+            f'<div class="header-filter-note">'
+            f'Filter aktif: menampilkan {len(filtered):,} dari {total_tx:,} transaksi pada tab Ringkasan, Segmen, dan Anomali.'
+            f'</div>'
+        )
 
     st.markdown(
         f"""
@@ -170,10 +206,13 @@ def render_styles_and_banner(df):
 .block-container {{
     padding-top: 3.75rem !important;
 }}
-a[href], button, summary, select, [role="tab"] {{
+a[href], button, summary, select, label[for], input[type="checkbox"], input[type="radio"], [role="button"], [role="tab"], [role="switch"] {{
     cursor: pointer;
 }}
-a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:focus-visible {{
+button:disabled, input:disabled, select:disabled, [aria-disabled="true"] {{
+    cursor: not-allowed !important;
+}}
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, [role="tab"]:focus-visible, [role="button"]:focus-visible, [tabindex]:focus-visible {{
     outline: 2px solid #1D4ED8;
     outline-offset: 2px;
 }}
@@ -187,6 +226,15 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
 [data-testid="stMetricValue"] {{
     color: #0F172A !important;
     font-weight: 700 !important;
+    font-size: clamp(1.15rem, 1.55vw, 1.55rem) !important;
+    line-height: 1.25 !important;
+    white-space: normal !important;
+}}
+[data-testid="stMetricValue"] > div {{
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+    overflow-wrap: break-word !important;
 }}
 [class*="st-key-card_"] {{
     background-color: #FFFFFF;
@@ -221,6 +269,17 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
     color: #E2E8F0 !important;
     margin: 0 !important;
     line-height: 1.45 !important;
+}}
+.header-filter-note {{
+    margin-top: 8px;
+    display: inline-block;
+    background-color: #1E293B;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: #E2E8F0 !important;
 }}
 .header-meta {{
     display: flex;
@@ -261,6 +320,7 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
     color: #334155 !important;
     font-weight: 600 !important;
     background-color: transparent;
+    transition: background-color 150ms ease, color 150ms ease;
 }}
 [data-testid="stTabs"] [role="tab"] p {{
     font-size: 0.92rem !important;
@@ -270,6 +330,10 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
 }}
 [data-testid="stTabs"] [role="tab"]:hover {{
     background-color: #F1F5F9;
+    color: #0F172A !important;
+}}
+[data-testid="stTabs"] [role="tab"]:active {{
+    background-color: #E2E8F0;
     color: #0F172A !important;
 }}
 [data-testid="stTabs"] [role="tab"][aria-selected="true"] {{
@@ -310,18 +374,30 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
 [data-testid="stSidebar"] span[data-baseweb="tag"] svg {{
     fill: #1E3A8A !important;
 }}
-[data-testid="stSidebar"] .stButton > button {{
+[data-testid="stSidebar"] .stButton > button,
+[data-testid="stFormSubmitButton"] button,
+[data-testid="stDownloadButton"] button {{
     background-color: #FFFFFF;
     color: #0F172A;
     border: 1px solid #64748B;
     border-radius: 6px;
     font-weight: 600;
     min-height: 44px;
+    transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
 }}
-[data-testid="stSidebar"] .stButton > button:hover {{
+[data-testid="stSidebar"] .stButton > button:hover,
+[data-testid="stFormSubmitButton"] button:hover,
+[data-testid="stDownloadButton"] button:hover {{
     background-color: #DBEAFE;
     border-color: #1D4ED8;
     color: #1E3A8A;
+}}
+[data-testid="stSidebar"] .stButton > button:active,
+[data-testid="stFormSubmitButton"] button:active,
+[data-testid="stDownloadButton"] button:active {{
+    background-color: #BFDBFE;
+    border-color: #1E3A8A;
+    color: #0F172A;
 }}
 .filter-status-box {{
     background-color: #FFFFFF;
@@ -369,18 +445,43 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
     font-size: 0.82rem;
     font-weight: 600;
     text-decoration: none !important;
+    transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
 }}
 .author-links a:hover {{
     background-color: #DBEAFE;
     border-color: #1D4ED8;
     color: #1E3A8A !important;
 }}
-@media (max-width: 768px) {{
+.author-links a:active {{
+    background-color: #BFDBFE;
+    border-color: #1E3A8A;
+    color: #0F172A !important;
+}}
+@media (max-width: 1024px) {{
     .page-header {{
-        padding: 16px 18px;
+        padding: 18px 20px;
+        gap: 14px;
     }}
     .meta-item {{
-        flex: 1 1 120px;
+        flex: 1 1 150px;
+    }}
+}}
+@media (max-width: 640px) {{
+    .block-container {{
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }}
+    .page-header {{
+        padding: 14px 16px;
+        gap: 12px;
+    }}
+    .header-copy {{
+        flex: 1 1 100%;
+    }}
+    .meta-item {{
+        flex: 1 1 calc(50% - 8px);
+        min-width: 120px;
+        padding: 8px 10px;
     }}
     [data-testid="stTabs"] [role="tab"] {{
         padding: 8px 12px;
@@ -400,6 +501,7 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, [tabindex]:fo
 <div class="header-copy">
 <div class="page-title" role="heading" aria-level="1">Transaction Anomaly Dashboard</div>
 <p class="page-subtitle">Segmentasi perilaku nasabah (K-Means), penanda transaksi tidak biasa (Isolation Forest), dan aturan risiko login. Data sintetis, proyek belajar.</p>
+{filter_note_html}
 </div>
 <div class="header-meta">
 <div class="meta-item">
@@ -546,6 +648,7 @@ def render_tab_summary(filtered):
                 breakdown_by = st.selectbox(
                     "Kategori",
                     options=["CustomerOccupation", "Channel", "TransactionType"],
+                    format_func=format_feature_label,
                     key="summary_breakdown_by",
                     label_visibility="collapsed",
                 )
@@ -563,13 +666,18 @@ def render_tab_summary(filtered):
                 color="Segment_Name",
                 color_discrete_map=SEGMENT_COLORS,
                 category_orders={"Segment_Name": list(SEGMENT_COLORS.keys())},
+                labels={
+                    breakdown_by: format_feature_label(breakdown_by),
+                    "Segment_Name": "Segmen",
+                    "Persentase (%)": "Persentase (%)",
+                },
                 template="plotly_white",
             )
             fig_cat.update_traces(marker_cornerradius=4)
             fig_cat.update_layout(
                 legend_title_text="Segmen",
                 yaxis_title="Persentase (%)",
-                xaxis_title=breakdown_by,
+                xaxis_title=format_feature_label(breakdown_by),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 margin=dict(t=40, b=20, l=20, r=20),
             )
@@ -583,7 +691,7 @@ def render_tab_summary(filtered):
             .mean()
             .round(2)
             .reset_index()
-            .rename(columns={"Segment_Name": "Segmen"})
+            .rename(columns=FEATURE_LABELS)
         )
         st.dataframe(profile, width="stretch", hide_index=True)
 
@@ -598,10 +706,18 @@ def render_tab_segments(filtered, df):
             options = CLUSTERING_FEATURES + ["Amount_Per_Second", "Anomaly_Score"]
             col_x, col_y = st.columns(2)
             x_axis = col_x.selectbox(
-                "Sumbu X", options, index=options.index("AccountBalance"), key="seg_x_axis"
+                "Sumbu X",
+                options,
+                index=options.index("AccountBalance"),
+                format_func=format_feature_label,
+                key="seg_x_axis",
             )
             y_axis = col_y.selectbox(
-                "Sumbu Y", options, index=options.index("TransactionAmount"), key="seg_y_axis"
+                "Sumbu Y",
+                options,
+                index=options.index("TransactionAmount"),
+                format_func=format_feature_label,
+                key="seg_y_axis",
             )
 
             fig = px.scatter(
@@ -611,6 +727,8 @@ def render_tab_segments(filtered, df):
                 color="Segment_Name",
                 color_discrete_map=SEGMENT_COLORS,
                 category_orders={"Segment_Name": list(SEGMENT_COLORS.keys())},
+                labels=FEATURE_LABELS,
+                hover_data=["CustomerOccupation", "Channel", "Location"],
                 opacity=0.82,
                 template="plotly_white",
             )
@@ -629,9 +747,17 @@ def render_tab_segments(filtered, df):
             feat_min, feat_max = get_feature_bounds(df)
             seg_means = filtered.groupby("Segment_Name")[CLUSTERING_FEATURES].mean()
             seg_norm = (seg_means - feat_min) / (feat_max - feat_min)
+            radar_labels = {
+                "TransactionAmount": "Nominal",
+                "CustomerAge": "Usia",
+                "TransactionDuration": "Durasi",
+                "AccountBalance": "Saldo",
+                "Balance_Ratio": "Rasio Saldo",
+            }
             radar_data = seg_norm.reset_index().melt(
                 id_vars="Segment_Name", var_name="Fitur", value_name="Nilai Normalisasi"
             )
+            radar_data["Fitur"] = radar_data["Fitur"].map(lambda c: radar_labels.get(c, c))
 
             fig_radar = px.line_polar(
                 radar_data,
@@ -641,6 +767,7 @@ def render_tab_segments(filtered, df):
                 line_close=True,
                 color_discrete_map=SEGMENT_COLORS,
                 category_orders={"Segment_Name": list(SEGMENT_COLORS.keys())},
+                labels={"Segment_Name": "Segmen", "Nilai Normalisasi": "Skor Normalisasi (0-1)"},
                 template="plotly_white",
             )
             fig_radar.update_traces(fill="toself", opacity=0.26, line=dict(width=2.5))
@@ -688,11 +815,11 @@ def render_tab_segments(filtered, df):
                 m2.metric("Saldo Rata-rata", f"${seg['AccountBalance'].mean():,.2f}")
                 m3, m4 = st.columns(2)
                 m3.metric("Transaksi Rata-rata", f"${seg['TransactionAmount'].mean():,.2f}")
-                m4.metric("Balance Ratio", f"{seg['Balance_Ratio'].mean():.2f}")
+                m4.metric("Rasio Transaksi / Saldo", f"{seg['Balance_Ratio'].mean():.2f}")
                 st.info(f"Ide tindakan: {SEGMENT_ACTIONS.get(name, '-')}")
 
 
-def render_tab_anomaly(filtered):
+def render_tab_anomaly(filtered, anomaly=None):
     st.subheader("Anomali & Risiko Login")
     st.caption(
         "Anomali = ditandai Isolation Forest. Risiko login = aturan LoginAttempts >= 3. "
@@ -730,15 +857,28 @@ def render_tab_anomaly(filtered):
     with c_l:
         with st.container(border=True, key="card_anom_hist"):
             st.markdown("**Sebaran skor anomali (0-100)**")
+            hist_data = filtered.assign(
+                Status_Anomali=filtered["Anomaly_Flag"].map({True: "Anomali", False: "Normal"})
+            )
             fig_hist = px.histogram(
-                filtered,
+                hist_data,
                 x="Anomaly_Score",
-                color="Anomaly_Flag",
+                color="Status_Anomali",
                 nbins=40,
                 template="plotly_white",
-                color_discrete_map=ANOMALY_COLORS,
-                labels={"Anomaly_Score": "Skor anomali (0-100)", "Anomaly_Flag": "Ditandai anomali"},
+                color_discrete_map={"Anomali": ANOMALY_COLORS[True], "Normal": ANOMALY_COLORS[False]},
+                category_orders={"Status_Anomali": ["Normal", "Anomali"]},
+                labels={"Anomaly_Score": "Skor anomali (0-100)", "Status_Anomali": "Status"},
             )
+            if anomaly is not None and "score_bounds" in anomaly:
+                thresh_score = _normalize_anomaly_score(0.0, anomaly["score_bounds"])
+                fig_hist.add_vline(
+                    x=thresh_score,
+                    line_dash="dash",
+                    line_color="#0F172A",
+                    annotation_text=f"Ambang ~{thresh_score:.1f}",
+                    annotation_position="top left",
+                )
             fig_hist.update_layout(
                 yaxis_title="Jumlah Transaksi",
                 margin=dict(t=25, b=20, l=20, r=20),
@@ -767,8 +907,16 @@ def render_tab_anomaly(filtered):
             st.plotly_chart(fig_heat, width="stretch")
 
     columns = [
-        "Segment_Name", "TransactionAmount", "AccountBalance", "Balance_Ratio",
-        "TransactionDuration", "CustomerAge", "LoginAttempts", "Anomaly_Score",
+        "Segment_Name",
+        "Anomaly_Score",
+        "LoginAttempts",
+        "TransactionAmount",
+        "AccountBalance",
+        "Balance_Ratio",
+        "TransactionDuration",
+        "CustomerAge",
+        "Channel",
+        "CustomerOccupation",
     ]
     with st.container(border=True, key="card_anom_table"):
         hdr_l, hdr_r = st.columns([3, 1])
@@ -793,7 +941,11 @@ def render_tab_anomaly(filtered):
             )
         else:
             sorted_view = view.sort_values("Anomaly_Score", ascending=False)
-            st.dataframe(sorted_view[columns].round(2), width="stretch", hide_index=True)
+            st.dataframe(
+                sorted_view[columns].round(2).rename(columns=FEATURE_LABELS),
+                width="stretch",
+                hide_index=True,
+            )
 
 
 def render_tab_predict(df, scaler_km, kmeans, anomaly):
@@ -822,16 +974,13 @@ def render_tab_predict(df, scaler_km, kmeans, anomaly):
             login = c3.number_input(
                 "Jumlah upaya login", 1, 20, int(preset["login"]), key=f"login_{preset_name}"
             )
-            submitted = st.form_submit_button("Hitung segmen & skor", width="stretch")
-
-    if not submitted:
-        return
+            st.form_submit_button("Hitung segmen & skor", width="stretch")
 
     result = predict_transaction(
         amount, balance, duration, age, login, scaler_km, kmeans, anomaly, segment_map
     )
 
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4 = st.columns([1.5, 0.9, 0.9, 0.7])
     with m1:
         with st.container(border=True, key="card_pred_seg"):
             st.metric("Segmen", result["segment"])
@@ -846,9 +995,17 @@ def render_tab_predict(df, scaler_km, kmeans, anomaly):
             st.metric("Aturan login", "Risiko" if result["is_high_login_risk"] else "Normal")
 
     st.caption(
-        f"Balance_Ratio {result['balance_ratio']:.2f} | "
-        f"Nominal per detik ${result['amount_per_second']:.2f}"
+        f"Rasio transaksi / saldo {result['balance_ratio']:.2f} | "
+        f"Nominal per detik {result['amount_per_second']:.2f} USD/dtk"
     )
+    seg_df = df[df["Segment_Name"] == result["segment"]]
+    if not seg_df.empty:
+        st.caption(
+            f"Pembanding rata-rata segmen {result['segment']}: "
+            f"nominal {seg_df['TransactionAmount'].mean():,.2f} USD, "
+            f"saldo {seg_df['AccountBalance'].mean():,.2f} USD, "
+            f"usia {seg_df['CustomerAge'].mean():.0f} thn."
+        )
     if result["is_anomaly"] or result["is_high_login_risk"]:
         st.warning("Transaksi ini layak ditinjau. Ini penanda dari model dan aturan sederhana, bukan bukti fraud.")
     else:
@@ -946,8 +1103,8 @@ def main():
             )
             st.stop()
 
-    render_styles_and_banner(df)
     filtered = render_sidebar(df)
+    render_styles_and_banner(df, filtered)
     if filtered.empty:
         st.warning("Tidak ada transaksi yang cocok dengan filter. Klik 'Reset Filter' di sidebar.")
         return
@@ -960,7 +1117,7 @@ def main():
     with tab_seg:
         render_tab_segments(filtered, df)
     with tab_anom:
-        render_tab_anomaly(filtered)
+        render_tab_anomaly(filtered, anomaly)
     with tab_pred:
         render_tab_predict(df, scaler_km, kmeans, anomaly)
     with tab_notes:

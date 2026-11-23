@@ -36,6 +36,8 @@ Proyek belajar saya untuk berlatih alur data science dari awal sampai tampil di 
 
 ```text
 transaction-anomaly-dashboard/
+├── .devcontainer/
+│   └── devcontainer.json
 ├── .streamlit/
 │   └── config.toml
 ├── data/
@@ -53,6 +55,7 @@ transaction-anomaly-dashboard/
 ├── app.py
 ├── requirements.txt
 ├── LICENSE
+├── .gitattributes
 ├── .gitignore
 └── README.md
 ```
@@ -66,7 +69,11 @@ python -m streamlit run app.py
 
 Dashboard terbuka di `http://localhost:8501`.
 
-Semua file di `data/` (selain `raw.xlsx`) dan `models/` dihasilkan oleh `notebooks/clustering.ipynb`. Jalankan notebook dari atas ke bawah (*Run All*) untuk membuatnya ulang.
+Semua file di `data/` (selain `raw.xlsx`) dan `models/` dihasilkan oleh `notebooks/clustering.ipynb`. Jalankan notebook dari atas ke bawah (*Run All*) untuk membuatnya ulang. Jika ingin menjalankan ulang notebook, pasang paket tambahannya terlebih dulu:
+
+```bash
+pip install matplotlib seaborn openpyxl jupyter
+```
 
 Pengujian sederhana:
 
