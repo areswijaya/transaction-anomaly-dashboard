@@ -695,6 +695,43 @@ def render_tab_summary(filtered):
         )
         st.dataframe(profile, width="stretch", hide_index=True)
 
+    with st.container(border=True, key="card_sum_findings"):
+        st.markdown("**Temuan utama (sesuai filter aktif)**")
+        anom_rows = filtered[filtered["Anomaly_Flag"]]
+        norm_rows = filtered[~filtered["Anomaly_Flag"]]
+        both_cnt = int((filtered["Anomaly_Flag"] & filtered["High_Login_Risk"]).sum())
+
+        if anom_rows.empty:
+            st.caption("Tidak ada transaksi yang ditandai anomali pada filter saat ini.")
+        else:
+            anom_amt = float(anom_rows["TransactionAmount"].mean())
+            anom_ratio = float(anom_rows["Balance_Ratio"].mean())
+            anom_high_ratio_pct = float((anom_rows["Balance_Ratio"] > 0.5).mean() * 100)
+            seg_rates = filtered.groupby("Segment_Name")["Anomaly_Flag"].mean() * 100
+            top_seg = str(seg_rates.idxmax())
+            top_seg_pct = float(seg_rates.max())
+
+            if norm_rows.empty:
+                amt_line = f"Rata-rata nominal anomali {anom_amt:,.2f} USD dengan Balance_Ratio rata-rata {anom_ratio:.2f}."
+            else:
+                norm_amt = float(norm_rows["TransactionAmount"].mean())
+                norm_ratio = float(norm_rows["Balance_Ratio"].mean())
+                norm_high_ratio_pct = float((norm_rows["Balance_Ratio"] > 0.5).mean() * 100)
+                amt_line = (
+                    f"Rata-rata nominal anomali {anom_amt:,.2f} USD (normal {norm_amt:,.2f} USD); "
+                    f"Balance_Ratio {anom_ratio:.2f} (normal {norm_ratio:.2f}), dan {anom_high_ratio_pct:.1f}% "
+                    f"anomali punya rasio di atas 0.5 (normal {norm_high_ratio_pct:.1f}%)."
+                )
+
+            st.markdown(
+                f"- {amt_line}\n"
+                f"- Tingkat anomali tertinggi ada di segmen **{top_seg}** ({top_seg_pct:.2f}% dari transaksi segmen pada filter ini).\n"
+                f"- Irisan anomali model dengan aturan `LoginAttempts >= {LOGIN_RISK_THRESHOLD}` berjumlah **{both_cnt:,} transaksi**."
+            )
+            st.caption(
+                "Catatan: `Balance_Ratio` ikut dipakai melatih Isolation Forest pada data sintetis, jadi temuan ini menggambarkan sifat outlier model, bukan pola fraud asli."
+            )
+
 
 def render_tab_segments(filtered, df):
     st.subheader("Segmen Nasabah (K-Means)")
@@ -905,6 +942,18 @@ def render_tab_anomaly(filtered, anomaly=None):
             fig_heat.update_layout(margin=dict(t=25, b=20, l=20, r=20))
             _style_chart(fig_heat, height=340, show_legend=False)
             st.plotly_chart(fig_heat, width="stretch")
+
+    both_cnt = int((filtered["Anomaly_Flag"] & filtered["High_Login_Risk"]).sum())
+    login_only_cnt = int((~filtered["Anomaly_Flag"] & filtered["High_Login_Risk"]).sum())
+    anom_only_cnt = int((filtered["Anomaly_Flag"] & ~filtered["High_Login_Risk"]).sum())
+    with st.container(border=True, key="card_anom_triage"):
+        st.markdown("**Contoh urutan tinjauan kandidat**")
+        st.markdown(
+            f"1. **Prioritas 1 ({both_cnt:,} transaksi):** anomali Isolation Forest sekaligus `LoginAttempts >= {LOGIN_RISK_THRESHOLD}`.\n"
+            f"2. **Prioritas 2 ({login_only_cnt:,} transaksi):** `LoginAttempts >= {LOGIN_RISK_THRESHOLD}` saja, fokus pada verifikasi akses akun.\n"
+            f"3. **Prioritas 3 ({anom_only_cnt:,} transaksi):** anomali perilaku saja, urutkan dari skor tertinggi dan cek nominal terhadap saldo."
+        )
+        st.caption("Contoh alur kerja untuk demo analisis pada data sintetis, bukan aturan operasional produksi.")
 
     columns = [
         "Segment_Name",

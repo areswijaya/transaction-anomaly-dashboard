@@ -19,6 +19,27 @@ Proyek belajar saya untuk berlatih alur data science dari awal sampai tampil di 
 4. **Aturan risiko login**: `LoginAttempts >= 3` menyaring 93 transaksi (3.70%). Ini aturan sederhana, bukan hasil model.
 5. **Dashboard Streamlit** dengan 5 tab (`Ringkasan`, `Segmen`, `Anomali & Login`, `Coba Transaksi`, `Catatan`), filter profesi/kanal/tipe/kota, grafik, tabel yang bisa diunduh, dan form untuk mencoba satu transaksi.
 
+## Temuan Utama
+
+Beberapa pola yang terlihat pada 2,516 transaksi hasil pembersihan:
+
+- **Nominal besar dan rasio saldo tinggi:** rata-rata nominal transaksi anomali 1,019.27 USD (median 1,043.66 USD), sedangkan transaksi normal 258.76 USD (median 199.38 USD). Rata-rata `Balance_Ratio` pada kelompok anomali 1.35 (median 0.74) dibanding 0.14 pada transaksi normal; 58.7% transaksi anomali (74 dari 126) memiliki `Balance_Ratio > 0.5`, dibanding 6.3% (150 dari 2,390) pada transaksi normal.
+- **Kecepatan nominal transaksi:** rata-rata `Amount_Per_Second` pada kelompok anomali 19.33 USD/detik dibanding 3.24 USD/detik pada transaksi normal.
+- **Sebaran antarsegmen:** tingkat anomali di segmen `Nasabah Muda Aktif` mencapai 9.62% (83 dari 863 transaksi), lebih tinggi dibanding `Nasabah Mapan Konservatif` sebesar 2.60% (43 dari 1,653 transaksi).
+- **Irisan dengan aturan login kecil:** hanya 3 transaksi (0.12%) yang sekaligus ditandai Isolation Forest dan memiliki `LoginAttempts >= 3`. Dua mekanisme ini menyaring kandidat yang sebagian besar berbeda.
+
+Catatan: `Balance_Ratio` dan `Amount_Per_Second` dipakai sebagai fitur input Isolation Forest pada data sintetis, jadi angka di atas menggambarkan karakter outlier model, bukan pola fraud asli.
+
+### Contoh Urutan Tinjauan
+
+Jika daftar kandidat di tab `Anomali & Login` dipakai untuk pemeriksaan manual, urutannya bisa dibuat seperti ini:
+
+1. **Prioritas 1 (irisan keduanya, 3 transaksi):** cek transaksi yang sekaligus anomali perilaku dan punya `LoginAttempts >= 3`.
+2. **Prioritas 2 (risiko login saja, 90 transaksi):** fokus ke verifikasi akses dan upaya masuk berulang.
+3. **Prioritas 3 (anomali perilaku saja, 123 transaksi):** urutkan dari `Anomaly_Score` tertinggi, lalu periksa nominal besar dibanding saldo atau durasi singkat.
+
+Ini hanya contoh alur kerja untuk demo analisis, bukan prosedur operasional produksi.
+
 ## Apa yang Saya Pelajari
 
 - Nilai Silhouette yang rendah (0.2634) berarti segmen saling tumpang tindih. Saya melaporkannya apa adanya, tidak dipoles.
