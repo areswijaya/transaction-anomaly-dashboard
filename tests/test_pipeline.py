@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
 
 import app
@@ -17,7 +18,7 @@ CLUSTERING_FEATURES = [
 ]
 REQUIRED_COLUMNS = CLUSTERING_FEATURES + [
     "LoginAttempts", "Amount_Per_Second", "Cluster", "Segment_Name",
-    "High_Login_Risk", "Anomaly_Flag", "Anomaly_Score",
+    "High_Login_Risk", "Anomaly_Flag", "Anomaly_Raw", "Anomaly_Score",
     "CustomerOccupation", "Channel", "TransactionType",
 ]
 
@@ -41,6 +42,19 @@ class PipelineTest(unittest.TestCase):
         cls.scaler = joblib.load(BASE_DIR / "models" / "scaler_clustering.joblib")
         cls.kmeans = joblib.load(BASE_DIR / "models" / "kmeans_model.joblib")
         cls.anomaly = joblib.load(BASE_DIR / "models" / "anomaly_model.joblib")
+        cls.segment_map = app.get_segment_map(cls.df)
+
+    def predict(self, amount, balance, duration, age, login):
+        return app.predict_transaction(
+            amount, balance, duration, age, login,
+            self.scaler, self.kmeans, self.anomaly, self.segment_map,
+        )
+
+    def preset(self, name):
+        p = app.PRESET_SCENARIOS[name]
+        return self.predict(p["amount"], p["balance"], p["duration"], p["age"], p["login"])
+
+    # --- data dan model saling cocok ---
 
     def test_columns_exist(self):
         missing = [c for c in REQUIRED_COLUMNS if c not in self.df.columns]
@@ -62,46 +76,81 @@ class PipelineTest(unittest.TestCase):
         names_per_cluster = self.df.groupby("Cluster")["Segment_Name"].nunique()
         self.assertTrue((names_per_cluster == 1).all())
 
+    def test_segment_names_match_app(self):
+        self.assertEqual(set(self.df["Segment_Name"].unique()), set(app.SEGMENT_COLORS))
+        self.assertEqual(set(app.SEGMENT_ACTIONS), set(app.SEGMENT_COLORS))
+
     def test_anomaly_score_range(self):
         self.assertTrue(self.df["Anomaly_Score"].between(0, 100).all())
 
     def test_anomaly_rate_close_to_contamination(self):
         rate = self.df["Anomaly_Flag"].mean()
         target = self.anomaly["contamination"]
-        self.assertLess(abs(rate - target), 0.02)
+        self.assertLess(abs(rate - target), 0.005)
 
     def test_anomaly_model_matches_saved_flags(self):
         scaled = self.anomaly["scaler"].transform(self.df[self.anomaly["features"]])
         flags = self.anomaly["model"].predict(scaled) == -1
         self.assertTrue((flags == self.df["Anomaly_Flag"].to_numpy()).all())
 
-    def test_predict_transaction_rules_and_edge_cases(self):
-        segment_map = app.get_segment_map(self.df)
+    def test_train_scores_match_saved_raw_scores(self):
+        train_scores = np.asarray(self.anomaly["train_scores"])
+        self.assertTrue((np.diff(train_scores) >= 0).all())
+        self.assertTrue(np.allclose(np.sort(self.df["Anomaly_Raw"].to_numpy()), train_scores))
 
-        zero_bal = app.predict_transaction(
-            100.0, 0.0, 90, 30, 2, self.scaler, self.kmeans, self.anomaly, segment_map
-        )
-        self.assertEqual(zero_bal["balance_ratio"], 0.0)
-        self.assertFalse(zero_bal["is_high_login_risk"])
-        self.assertTrue(0.0 <= zero_bal["anomaly_score"] <= 100.0)
-        self.assertTrue(0.0 <= zero_bal["threshold_score"] <= 100.0)
+    def test_percentile_threshold_separates_flags(self):
+        thresh = app.anomaly_threshold(self.anomaly["train_scores"])
+        self.assertTrue(((self.df["Anomaly_Score"] > thresh) == self.df["Anomaly_Flag"]).all())
+        self.assertAlmostEqual(thresh, 100 * (1 - self.anomaly["contamination"]), delta=0.5)
 
-        login_edge = app.predict_transaction(
-            100.0, 5000.0, 90, 30, 3, self.scaler, self.kmeans, self.anomaly, segment_map
-        )
-        self.assertTrue(login_edge["is_high_login_risk"])
+    # --- predict_transaction ---
 
-        extreme = app.predict_transaction(
-            1450.0, 800.0, 35, 40, 1, self.scaler, self.kmeans, self.anomaly, segment_map
-        )
+    def test_predict_reproduces_training_rows(self):
+        for _, r in self.df.sample(200, random_state=0).iterrows():
+            out = self.predict(r["TransactionAmount"], r["AccountBalance"], r["TransactionDuration"],
+                               r["CustomerAge"], r["LoginAttempts"])
+            self.assertEqual(out["segment"], r["Segment_Name"])
+            self.assertEqual(out["is_anomaly"], bool(r["Anomaly_Flag"]))
+            self.assertAlmostEqual(out["anomaly_score"], r["Anomaly_Score"], delta=0.01)
+
+    def test_zero_balance_is_not_treated_as_normal(self):
+        out = self.predict(100.0, 0.0, 90, 30, 2)
+        self.assertEqual(out["balance_ratio"], 100.0 / app.MIN_BALANCE)
+        self.assertTrue(out["is_anomaly"])
+        self.assertFalse(out["is_high_login_risk"])
+        self.assertTrue(0.0 <= out["anomaly_score"] <= 100.0)
+        self.assertTrue(0.0 <= out["threshold_score"] <= 100.0)
+
+    def test_login_rule_edge(self):
+        self.assertTrue(self.predict(100.0, 5000.0, 90, 30, 3)["is_high_login_risk"])
+        self.assertFalse(self.predict(100.0, 5000.0, 90, 30, 2)["is_high_login_risk"])
+
+    def test_preset_scenarios(self):
+        young = self.preset("Nasabah muda, normal")
+        self.assertEqual(young["segment"], app.SEG_YOUNG)
+        self.assertFalse(young["is_anomaly"])
+
+        older = self.preset("Nasabah mapan, normal")
+        self.assertEqual(older["segment"], app.SEG_OLDER)
+        self.assertFalse(older["is_anomaly"])
+
+        extreme = self.preset("Nominal besar, saldo kecil")
         self.assertTrue(extreme["is_anomaly"])
 
-        conservative = app.predict_transaction(
-            250.0, 7500.0, 115, 56, 1, self.scaler, self.kmeans, self.anomaly, segment_map
-        )
-        self.assertEqual(conservative["segment"], "Nasabah Mapan Konservatif")
+        login = self.preset("Login berulang")
+        self.assertTrue(login["is_high_login_risk"])
+        self.assertFalse(login["is_anomaly"])
 
-    def test_writing_and_artifacts(self):
+    def test_out_of_range_detection(self):
+        lo, hi = app.get_feature_bounds(self.df)
+        inside = {c: float((lo[c] + hi[c]) / 2) for c in CLUSTERING_FEATURES}
+        self.assertEqual(app.out_of_range(inside, lo, hi), [])
+        outside = dict(inside, TransactionAmount=float(hi["TransactionAmount"]) * 10)
+        self.assertEqual(app.out_of_range(outside, lo, hi), [app.format_feature_label("TransactionAmount")])
+
+    # --- repo hygiene ---
+
+    def test_no_stale_artifacts(self):
         for stale in [
             BASE_DIR / "models" / "anomaly_bundle.joblib",
             BASE_DIR / "notebooks" / "classification.ipynb",
@@ -109,9 +158,11 @@ class PipelineTest(unittest.TestCase):
         ]:
             self.assertFalse(stale.exists(), f"Stale artifact exists: {stale}")
 
+    def test_theme_config(self):
         config_text = (BASE_DIR / ".streamlit" / "config.toml").read_text(encoding="utf-8")
         self.assertIn('primaryColor = "#1D4ED8"', config_text)
 
+    def test_no_em_or_en_dash(self):
         text_files = [
             BASE_DIR / "app.py",
             BASE_DIR / "README.md",
@@ -123,15 +174,17 @@ class PipelineTest(unittest.TestCase):
             self.assertNotIn("\u2014", content, f"Em dash found in {file_path.name}")
             self.assertNotIn("\u2013", content, f"En dash found in {file_path.name}")
 
+    def test_app_style_markers(self):
         app_text = (BASE_DIR / "app.py").read_text(encoding="utf-8")
         for slop_marker in ["linear-gradient", "hero-badge", "CREATED BY"]:
             self.assertNotIn(slop_marker, app_text)
         self.assertIn("padding-top: 3.75rem", app_text)
 
+    def test_notebook_is_clean(self):
         nb = json.loads((BASE_DIR / "notebooks" / "clustering.ipynb").read_text(encoding="utf-8"))
         for cell in nb["cells"]:
             if cell["cell_type"] == "code":
-                self.assertEqual(cell.get("outputs", []), [])
+                self.assertEqual(cell.get("outputs", []), [], "Notebook masih berisi output, bersihkan sebelum commit")
 
         nb_sources = "\n".join(
             "".join(cell.get("source", [])) for cell in nb["cells"] if cell["cell_type"] == "code"
@@ -139,13 +192,14 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("ROOT_DIR", nb_sources)
         self.assertIn("raw.xlsx", nb_sources)
 
+    def test_feature_labels(self):
         self.assertTrue(set(CLUSTERING_FEATURES).issubset(app.FEATURE_LABELS))
         self.assertNotEqual(app.format_feature_label("TransactionAmount"), "TransactionAmount")
 
+    def test_devcontainer_is_valid_json(self):
         devcontainer_raw = (BASE_DIR / ".devcontainer" / "devcontainer.json").read_text(encoding="utf-8")
         self.assertNotIn("\u2705", devcontainer_raw)
-        devcontainer = json.loads(devcontainer_raw)
-        self.assertIsInstance(devcontainer, dict)
+        self.assertIsInstance(json.loads(devcontainer_raw), dict)
 
     def test_palette_contrast(self):
         text_pairs = [

@@ -1,3 +1,4 @@
+import pickle
 from pathlib import Path
 
 import joblib
@@ -8,6 +9,7 @@ import streamlit as st
 
 BASE_DIR = Path(__file__).resolve().parent
 LOGIN_RISK_THRESHOLD = 3
+MIN_BALANCE = 1.0  # saldo minimal pada perhitungan rasio; saldo 0 tidak boleh membuat rasio jadi 0
 
 CLUSTERING_FEATURES = [
     "TransactionAmount",
@@ -17,6 +19,9 @@ CLUSTERING_FEATURES = [
     "Balance_Ratio",
 ]
 
+SEG_YOUNG = "Nasabah Muda Saldo Kecil"
+SEG_OLDER = "Nasabah Lebih Tua Saldo Besar"
+
 FEATURE_LABELS = {
     "TransactionAmount": "Nominal Transaksi (USD)",
     "CustomerAge": "Usia Nasabah (tahun)",
@@ -25,7 +30,8 @@ FEATURE_LABELS = {
     "Balance_Ratio": "Rasio Transaksi / Saldo",
     "Amount_Per_Second": "Nominal per Detik (USD/dtk)",
     "LoginAttempts": "Upaya Login",
-    "Anomaly_Score": "Skor Anomali (0-100)",
+    "Anomaly_Score": "Skor Anomali (persentil 0-100)",
+    "Anomaly_Raw": "Skor Mentah Isolation Forest",
     "Segment_Name": "Segmen",
     "CustomerOccupation": "Profesi",
     "Channel": "Kanal",
@@ -40,13 +46,14 @@ def format_feature_label(col):
     return FEATURE_LABELS.get(col, col)
 
 SEGMENT_COLORS = {
-    "Nasabah Muda Aktif": "#B45309",
-    "Nasabah Mapan Konservatif": "#1D4ED8",
+    SEG_YOUNG: "#B45309",
+    SEG_OLDER: "#1D4ED8",
 }
 
+# Ide hipotesis untuk demo, belum diuji pada data nyata
 SEGMENT_ACTIONS = {
-    "Nasabah Muda Aktif": "Tawarkan fitur auto-debit, batas anggaran, atau promo cashback.",
-    "Nasabah Mapan Konservatif": "Tawarkan deposito, obligasi, atau reksa dana risiko rendah.",
+    SEG_YOUNG: "Tawarkan fitur auto-debit, batas anggaran, atau promo cashback.",
+    SEG_OLDER: "Tawarkan deposito, obligasi, atau reksa dana risiko rendah.",
 }
 
 ANOMALY_COLORS = {
@@ -100,6 +107,8 @@ def load_models():
     scaler_km = joblib.load(BASE_DIR / "models" / "scaler_clustering.joblib")
     kmeans = joblib.load(BASE_DIR / "models" / "kmeans_model.joblib")
     anomaly = joblib.load(BASE_DIR / "models" / "anomaly_model.joblib")
+    if "train_scores" not in anomaly:
+        raise KeyError("train_scores tidak ada di anomaly_model.joblib, jalankan ulang notebook dari atas ke bawah")
     return scaler_km, kmeans, anomaly
 
 
@@ -121,17 +130,28 @@ def get_feature_bounds(_df):
     return _df[CLUSTERING_FEATURES].min(), _df[CLUSTERING_FEATURES].max()
 
 
+def out_of_range(values, lo, hi):
+    """Nama fitur (berlabel) yang nilainya di luar rentang data latih."""
+    return [
+        format_feature_label(col)
+        for col, value in values.items()
+        if value < lo[col] or value > hi[col]
+    ]
+
+
 def get_segment_map(df):
     """Peta nomor cluster ke nama segmen, diambil dari data hasil notebook."""
     return df.groupby("Cluster")["Segment_Name"].first().to_dict()
 
 
-def _normalize_anomaly_score(raw_value, score_bounds):
-    """Konversi skor mentah Isolation Forest ke skala 0-100 berdasarkan batas training."""
-    lo, hi = score_bounds
-    if hi <= lo:
-        return 0.0
-    return float(np.clip((raw_value - lo) / (hi - lo), 0.0, 1.0)) * 100.0
+def anomaly_percentile(raw_value, train_scores):
+    """Persentil 0-100: persen data latih yang skor mentahnya tidak lebih besar dari raw_value."""
+    return float(np.searchsorted(train_scores, raw_value, side="right")) / len(train_scores) * 100.0
+
+
+def anomaly_threshold(train_scores):
+    """Ambang anomali (skor mentah = 0) pada skala persentil."""
+    return anomaly_percentile(0.0, train_scores)
 
 
 def predict_transaction(
@@ -146,7 +166,7 @@ def predict_transaction(
     segment_map,
 ):
     """Petakan satu transaksi ke segmen K-Means, skor anomali 0-100, dan aturan login."""
-    balance_ratio = float(amount / balance) if balance > 0 else 0.0
+    balance_ratio = float(amount / max(balance, MIN_BALANCE))
     amount_per_second = float(amount / max(duration, 1))
 
     km_row = pd.DataFrame([{
@@ -170,15 +190,16 @@ def predict_transaction(
     an_scaled = anomaly["scaler"].transform(an_row)
 
     raw = float(-anomaly["model"].decision_function(an_scaled)[0])
-    score = _normalize_anomaly_score(raw, anomaly["score_bounds"])
-    # Isolation Forest menandai anomali saat -decision_function(x) > 0; konversi 0.0 ke skala 0-100.
-    thresh = _normalize_anomaly_score(0.0, anomaly["score_bounds"])
+    score = anomaly_percentile(raw, anomaly["train_scores"])
+    # Isolation Forest menandai anomali saat -decision_function(x) > 0; ambangnya pada skala persentil.
+    thresh = anomaly_threshold(anomaly["train_scores"])
     is_anomaly = bool(anomaly["model"].predict(an_scaled)[0] == -1)
 
     return {
         "segment": segment_map.get(cluster, f"Cluster {cluster}"),
         "balance_ratio": balance_ratio,
         "amount_per_second": amount_per_second,
+        "anomaly_raw": raw,
         "anomaly_score": round(score, 2),
         "threshold_score": round(thresh, 2),
         "is_anomaly": is_anomaly,
@@ -696,7 +717,7 @@ def render_tab_summary(filtered):
         st.dataframe(profile, width="stretch", hide_index=True)
 
     with st.container(border=True, key="card_sum_findings"):
-        st.markdown("**Temuan utama (sesuai filter aktif)**")
+        st.markdown("**Karakter transaksi yang ditandai (sesuai filter aktif)**")
         anom_rows = filtered[filtered["Anomaly_Flag"]]
         norm_rows = filtered[~filtered["Anomaly_Flag"]]
         both_cnt = int((filtered["Anomaly_Flag"] & filtered["High_Login_Risk"]).sum())
@@ -725,11 +746,12 @@ def render_tab_summary(filtered):
 
             st.markdown(
                 f"- {amt_line}\n"
-                f"- Tingkat anomali tertinggi ada di segmen **{top_seg}** ({top_seg_pct:.2f}% dari transaksi segmen pada filter ini).\n"
+                f"- Tingkat anomali tertinggi ada di segmen **{top_seg}** ({top_seg_pct:.2f}% dari transaksi segmen pada filter ini). "
+                f"Selisih antar-segmen sebagian besar mengikuti definisi `Balance_Ratio` (saldo kecil membuat rasio besar).\n"
                 f"- Irisan anomali model dengan aturan `LoginAttempts >= {LOGIN_RISK_THRESHOLD}` berjumlah **{both_cnt:,} transaksi**."
             )
             st.caption(
-                "Catatan: `Balance_Ratio` ikut dipakai melatih Isolation Forest pada data sintetis, jadi temuan ini menggambarkan sifat outlier model, bukan pola fraud asli."
+                "Catatan: `Balance_Ratio` dan `Amount_Per_Second` ikut dipakai melatih Isolation Forest pada data sintetis, jadi angka ini menggambarkan sifat outlier model, bukan pola fraud asli."
             )
 
 
@@ -779,61 +801,49 @@ def render_tab_segments(filtered, df):
             st.plotly_chart(fig, width="stretch")
 
     with vis_r:
-        with st.container(border=True, key="card_seg_radar"):
-            st.markdown("**Perbandingan 5 fitur perilaku per segmen (skala 0-1)**")
-            feat_min, feat_max = get_feature_bounds(df)
-            seg_means = filtered.groupby("Segment_Name")[CLUSTERING_FEATURES].mean()
-            seg_norm = (seg_means - feat_min) / (feat_max - feat_min)
-            radar_labels = {
+        with st.container(border=True, key="card_seg_zscore"):
+            st.markdown("**Selisih segmen dari rata-rata seluruh data (z-score)**")
+            pop_mean = df[CLUSTERING_FEATURES].mean()
+            pop_std = df[CLUSTERING_FEATURES].std()
+            seg_z = (filtered.groupby("Segment_Name")[CLUSTERING_FEATURES].mean() - pop_mean) / pop_std
+            z_labels = {
                 "TransactionAmount": "Nominal",
                 "CustomerAge": "Usia",
                 "TransactionDuration": "Durasi",
                 "AccountBalance": "Saldo",
                 "Balance_Ratio": "Rasio Saldo",
             }
-            radar_data = seg_norm.reset_index().melt(
-                id_vars="Segment_Name", var_name="Fitur", value_name="Nilai Normalisasi"
-            )
-            radar_data["Fitur"] = radar_data["Fitur"].map(lambda c: radar_labels.get(c, c))
+            z_data = seg_z.reset_index().melt(id_vars="Segment_Name", var_name="Fitur", value_name="Selisih (z)")
+            z_data["Fitur"] = z_data["Fitur"].map(lambda c: z_labels.get(c, c))
 
-            fig_radar = px.line_polar(
-                radar_data,
-                r="Nilai Normalisasi",
-                theta="Fitur",
+            fig_z = px.bar(
+                z_data,
+                x="Fitur",
+                y="Selisih (z)",
                 color="Segment_Name",
-                line_close=True,
+                barmode="group",
                 color_discrete_map=SEGMENT_COLORS,
-                category_orders={"Segment_Name": list(SEGMENT_COLORS.keys())},
-                labels={"Segment_Name": "Segmen", "Nilai Normalisasi": "Skor Normalisasi (0-1)"},
+                category_orders={"Segment_Name": list(SEGMENT_COLORS.keys()), "Fitur": list(z_labels.values())},
+                labels={"Segment_Name": "Segmen"},
                 template="plotly_white",
             )
-            fig_radar.update_traces(fill="toself", opacity=0.26, line=dict(width=2.5))
-            fig_radar.update_layout(
+            fig_z.add_hline(y=0, line_color="#64748B")
+            fig_z.update_traces(marker_cornerradius=4)
+            fig_z.update_layout(
                 legend_title_text="Segmen",
-                legend=dict(orientation="h", yanchor="bottom", y=-0.22, xanchor="center", x=0.5),
-                margin=dict(t=40, b=70, l=65, r=65),
-                polar=dict(
-                    domain=dict(x=[0.16, 0.84], y=[0.16, 0.86]),
-                    bgcolor="#FFFFFF",
-                    radialaxis=dict(
-                        gridcolor="#CBD5E1",
-                        linecolor="#CBD5E1",
-                        tickfont=dict(size=11, color="#0F172A"),
-                    ),
-                    angularaxis=dict(
-                        gridcolor="#CBD5E1",
-                        linecolor="#CBD5E1",
-                        tickfont=dict(size=12, color="#0F172A"),
-                    ),
-                ),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                xaxis_title="",
+                yaxis_title="Selisih dari rata-rata (satuan simpangan baku)",
+                margin=dict(t=40, b=20, l=20, r=20),
             )
-            _style_chart(fig_radar, height=490, show_legend=True)
-            st.plotly_chart(fig_radar, width="stretch")
+            _style_chart(fig_z, height=440, show_legend=True)
+            st.plotly_chart(fig_z, width="stretch")
+            st.caption("0 = sama dengan rata-rata seluruh data; positif = di atas rata-rata. Ini ruang yang dilihat K-Means (data distandarkan).")
 
     st.markdown("**Profil & Rekomendasi Segmen (data keseluruhan)**")
     total_all = len(df)
     seg_cols = st.columns(2)
-    for idx, (col_box, name) in enumerate(zip(seg_cols, ["Nasabah Muda Aktif", "Nasabah Mapan Konservatif"])):
+    for idx, (col_box, name) in enumerate(zip(seg_cols, list(SEGMENT_COLORS.keys()))):
         seg = df[df["Segment_Name"] == name]
         if seg.empty:
             continue
@@ -853,10 +863,10 @@ def render_tab_segments(filtered, df):
                 m3, m4 = st.columns(2)
                 m3.metric("Transaksi Rata-rata", f"${seg['TransactionAmount'].mean():,.2f}")
                 m4.metric("Rasio Transaksi / Saldo", f"{seg['Balance_Ratio'].mean():.2f}")
-                st.info(f"Ide tindakan: {SEGMENT_ACTIONS.get(name, '-')}")
+                st.info(f"Ide tindakan (hipotesis): {SEGMENT_ACTIONS.get(name, '-')}")
 
 
-def render_tab_anomaly(filtered, anomaly=None):
+def render_tab_anomaly(filtered):
     st.subheader("Anomali & Risiko Login")
     st.caption(
         "Anomali = ditandai Isolation Forest. Risiko login = aturan LoginAttempts >= 3. "
@@ -885,7 +895,7 @@ def render_tab_anomaly(filtered, anomaly=None):
             st.metric("Transaksi Terfilter", f"{len(view):,} ({view_pct:.2f}%)")
     with k2:
         with st.container(border=True, key="card_anom_max"):
-            st.metric("Skor Anomali Tertinggi", f"{max_score:.2f}")
+            st.metric("Skor Anomali Tertinggi (persentil)", f"{max_score:.2f}")
     with k3:
         with st.container(border=True, key="card_anom_avg"):
             st.metric("Rata-rata Nominal Terfilter", f"${mean_amt:,.2f}")
@@ -893,29 +903,27 @@ def render_tab_anomaly(filtered, anomaly=None):
     c_l, c_r = st.columns([1.4, 1])
     with c_l:
         with st.container(border=True, key="card_anom_hist"):
-            st.markdown("**Sebaran skor anomali (0-100)**")
+            st.markdown("**Sebaran skor mentah Isolation Forest (di atas 0 = anomali)**")
             hist_data = filtered.assign(
                 Status_Anomali=filtered["Anomaly_Flag"].map({True: "Anomali", False: "Normal"})
             )
             fig_hist = px.histogram(
                 hist_data,
-                x="Anomaly_Score",
+                x="Anomaly_Raw",
                 color="Status_Anomali",
                 nbins=40,
                 template="plotly_white",
                 color_discrete_map={"Anomali": ANOMALY_COLORS[True], "Normal": ANOMALY_COLORS[False]},
                 category_orders={"Status_Anomali": ["Normal", "Anomali"]},
-                labels={"Anomaly_Score": "Skor anomali (0-100)", "Status_Anomali": "Status"},
+                labels={"Anomaly_Raw": "Skor mentah Isolation Forest", "Status_Anomali": "Status"},
             )
-            if anomaly is not None and "score_bounds" in anomaly:
-                thresh_score = _normalize_anomaly_score(0.0, anomaly["score_bounds"])
-                fig_hist.add_vline(
-                    x=thresh_score,
-                    line_dash="dash",
-                    line_color="#0F172A",
-                    annotation_text=f"Ambang ~{thresh_score:.1f}",
-                    annotation_position="top left",
-                )
+            fig_hist.add_vline(
+                x=0.0,
+                line_dash="dash",
+                line_color="#0F172A",
+                annotation_text="Ambang anomali (0)",
+                annotation_position="top left",
+            )
             fig_hist.update_layout(
                 yaxis_title="Jumlah Transaksi",
                 margin=dict(t=25, b=20, l=20, r=20),
@@ -1012,7 +1020,7 @@ def render_tab_predict(df, scaler_km, kmeans, anomaly):
                 "Nominal transaksi (USD)", 0.0, 100000.0, float(preset["amount"]), key=f"amount_{preset_name}"
             )
             balance = c1.number_input(
-                "Saldo akun (USD)", 0.0, 1000000.0, float(preset["balance"]), key=f"balance_{preset_name}"
+                "Saldo akun (USD)", MIN_BALANCE, 1000000.0, float(preset["balance"]), key=f"balance_{preset_name}"
             )
             duration = c2.number_input(
                 "Durasi transaksi (detik)", 1, 1000, int(preset["duration"]), key=f"duration_{preset_name}"
@@ -1029,13 +1037,28 @@ def render_tab_predict(df, scaler_km, kmeans, anomaly):
         amount, balance, duration, age, login, scaler_km, kmeans, anomaly, segment_map
     )
 
+    feat_min, feat_max = get_feature_bounds(df)
+    entered = {
+        "TransactionAmount": float(amount),
+        "CustomerAge": float(age),
+        "TransactionDuration": float(duration),
+        "AccountBalance": float(balance),
+        "Balance_Ratio": result["balance_ratio"],
+    }
+    outside = out_of_range(entered, feat_min, feat_max)
+    if outside:
+        st.warning(
+            "Di luar rentang data latih: " + ", ".join(outside) + ". "
+            "Hasil di area ini adalah ekstrapolasi model, bukan pola yang pernah dilihat model."
+        )
+
     m1, m2, m3, m4 = st.columns([1.5, 0.9, 0.9, 0.7])
     with m1:
         with st.container(border=True, key="card_pred_seg"):
             st.metric("Segmen", result["segment"])
     with m2:
         with st.container(border=True, key="card_pred_score"):
-            st.metric("Skor anomali (0-100)", f"{result['anomaly_score']:.1f}")
+            st.metric("Skor anomali (persentil)", f"{result['anomaly_score']:.1f}")
     with m3:
         with st.container(border=True, key="card_pred_if"):
             st.metric("Isolation Forest", "Anomali" if result["is_anomaly"] else "Tidak anomali")
@@ -1045,7 +1068,8 @@ def render_tab_predict(df, scaler_km, kmeans, anomaly):
 
     st.caption(
         f"Rasio transaksi / saldo {result['balance_ratio']:.2f} | "
-        f"Nominal per detik {result['amount_per_second']:.2f} USD/dtk"
+        f"Nominal per detik {result['amount_per_second']:.2f} USD/dtk | "
+        f"Lebih tidak biasa daripada {result['anomaly_score']:.1f}% data latih"
     )
     seg_df = df[df["Segment_Name"] == result["segment"]]
     if not seg_df.empty:
@@ -1085,14 +1109,14 @@ def render_tab_predict(df, scaler_km, kmeans, anomaly):
         )
         fig_pos.update_layout(
             xaxis_range=[0, 108],
-            xaxis_title="Skor anomali (0-100)",
+            xaxis_title="Skor anomali (persentil 0-100)",
             yaxis_title="",
             margin=dict(t=30, b=20, l=15, r=20),
         )
         _style_chart(fig_pos, height=170, show_legend=False)
         st.plotly_chart(fig_pos, width="stretch")
 
-    st.info(f"Ide tindakan untuk segmen ini: {SEGMENT_ACTIONS.get(result['segment'], '-')}")
+    st.info(f"Ide tindakan (hipotesis) untuk segmen ini: {SEGMENT_ACTIONS.get(result['segment'], '-')}")
 
 
 def render_tab_notes(anomaly):
@@ -1112,8 +1136,10 @@ def render_tab_notes(anomaly):
 
 **Keterbatasan**
 - **Data sintetis dan tanpa label fraud asli.** Precision dan recall tidak bisa dihitung. Anomali hanya berarti "tidak biasa", bukan "fraud".
-- **Segmen saling tumpang tindih.** Silhouette Score k = 2 hanya {sil_text}. Dua segmen pada dasarnya memisahkan nasabah muda bersaldo kecil dan nasabah lebih tua bersaldo besar.
-- **Jumlah anomali mengikuti pilihan `contamination = {anomaly.get('contamination', 0.05):.2f}`**, bukan temuan dari data. Uji sensitivitasnya ada di notebook (bagian 5.1).
+- **Segmen saling tumpang tindih.** Silhouette Score k = 2 hanya {sil_text}. Dua segmen pada dasarnya memisahkan nasabah muda bersaldo kecil dan nasabah lebih tua bersaldo besar, itu sebabnya nama segmen hanya memuat usia dan saldo.
+- **Jumlah anomali mengikuti pilihan `contamination = {anomaly.get('contamination', 0.05):.2f}`**, bukan temuan dari data. Uji stabilitas (seed, fitur, pembanding satu fitur) ada di notebook bagian 5.1 sampai 5.4.
+- **Skor anomali adalah persentil** dari skor mentah pada data latih: skor 97 berarti lebih tidak biasa daripada 97% data latih. Ambang anomali jatuh di sekitar persentil 95.
+- **Selisih tingkat anomali antar-segmen sebagian besar efek definisi `Balance_Ratio`** (saldo kecil membuat rasio besar), bukan perilaku segmen. Di dalam kelompok rasio yang sama, selisihnya hilang.
 - **Sumber data:** dataset latihan Dicoding (adaptasi Kaggle *Bank Transaction Dataset for Fraud Detection*), transaksi sintetis kota-kota AS dalam USD.
 """
         )
@@ -1145,10 +1171,10 @@ def main():
         try:
             df = load_data()
             scaler_km, kmeans, anomaly = load_models()
-        except (FileNotFoundError, OSError, ValueError, KeyError) as err:
+        except (FileNotFoundError, OSError, ValueError, KeyError, AttributeError, ImportError, EOFError, pickle.UnpicklingError) as err:
             st.error(
                 f"Gagal memuat data atau model: {err}. "
-                "Pastikan folder data/ dan models/ berisi hasil dari notebook."
+                "Pastikan folder data/ dan models/ berisi hasil dari notebook, dan jalankan ulang notebook jika versi library berbeda."
             )
             st.stop()
 
@@ -1166,7 +1192,7 @@ def main():
     with tab_seg:
         render_tab_segments(filtered, df)
     with tab_anom:
-        render_tab_anomaly(filtered, anomaly)
+        render_tab_anomaly(filtered)
     with tab_pred:
         render_tab_predict(df, scaler_km, kmeans, anomaly)
     with tab_notes:
