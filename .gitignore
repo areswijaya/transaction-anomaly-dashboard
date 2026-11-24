@@ -1,10 +1,9 @@
-# Virtual environment & cache
 .venv/
+venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
 .ipynb_checkpoints/
-
-# Arsip & file lokal non-deployment
 archive/
 .DS_Store
 Thumbs.db

@@ -54,7 +54,7 @@ class PipelineTest(unittest.TestCase):
         p = app.PRESET_SCENARIOS[name]
         return self.predict(p["amount"], p["balance"], p["duration"], p["age"], p["login"])
 
-    # --- data dan model saling cocok ---
+    # Konsistensi data dan model
 
     def test_columns_exist(self):
         missing = [c for c in REQUIRED_COLUMNS if c not in self.df.columns]
@@ -103,7 +103,7 @@ class PipelineTest(unittest.TestCase):
         self.assertTrue(((self.df["Anomaly_Score"] > thresh) == self.df["Anomaly_Flag"]).all())
         self.assertAlmostEqual(thresh, 100 * (1 - self.anomaly["contamination"]), delta=0.5)
 
-    # --- predict_transaction ---
+    # Simulasi transaksi tunggal
 
     def test_predict_reproduces_training_rows(self):
         for _, r in self.df.sample(200, random_state=0).iterrows():
@@ -143,12 +143,24 @@ class PipelineTest(unittest.TestCase):
 
     def test_out_of_range_detection(self):
         lo, hi = app.get_feature_bounds(self.df)
-        inside = {c: float((lo[c] + hi[c]) / 2) for c in CLUSTERING_FEATURES}
+        inside = {c: float((lo[c] + hi[c]) / 2) for c in app.ANOMALY_FEATURES}
         self.assertEqual(app.out_of_range(inside, lo, hi), [])
-        outside = dict(inside, TransactionAmount=float(hi["TransactionAmount"]) * 10)
-        self.assertEqual(app.out_of_range(outside, lo, hi), [app.format_feature_label("TransactionAmount")])
+        outside_amt = dict(inside, TransactionAmount=float(hi["TransactionAmount"]) * 10)
+        self.assertEqual(app.out_of_range(outside_amt, lo, hi), [app.format_feature_label("TransactionAmount")])
+        outside_aps = dict(inside, Amount_Per_Second=float(hi["Amount_Per_Second"]) * 10)
+        self.assertEqual(app.out_of_range(outside_aps, lo, hi), [app.format_feature_label("Amount_Per_Second")])
 
-    # --- repo hygiene ---
+    def test_reset_filters_restores_empty_selection(self):
+        from streamlit.testing.v1 import AppTest
+
+        at = AppTest.from_file(str(BASE_DIR / "app.py"), default_timeout=15).run()
+        at.sidebar.multiselect[1].set_value([]).run()
+        self.assertEqual(len(at.warning), 1)
+        at.sidebar.button(key="reset_filters_btn").click().run()
+        self.assertEqual(len(at.warning), 0)
+        self.assertEqual(sorted(at.sidebar.multiselect[1].value), sorted(self.df["Channel"].unique()))
+
+    # Kebersihan repositori
 
     def test_no_stale_artifacts(self):
         for stale in [
@@ -156,7 +168,7 @@ class PipelineTest(unittest.TestCase):
             BASE_DIR / "notebooks" / "classification.ipynb",
             BASE_DIR / "models" / "rf_classifier_pipeline.joblib",
         ]:
-            self.assertFalse(stale.exists(), f"Stale artifact exists: {stale}")
+            self.assertFalse(stale.exists(), f"Artefak usang masih ada: {stale}")
 
     def test_theme_config(self):
         config_text = (BASE_DIR / ".streamlit" / "config.toml").read_text(encoding="utf-8")
@@ -168,11 +180,15 @@ class PipelineTest(unittest.TestCase):
             BASE_DIR / "README.md",
             BASE_DIR / "notebooks" / "clustering.ipynb",
             BASE_DIR / "tests" / "test_pipeline.py",
+            BASE_DIR / ".devcontainer" / "devcontainer.json",
+            BASE_DIR / ".streamlit" / "config.toml",
+            BASE_DIR / ".gitignore",
+            BASE_DIR / ".gitattributes",
         ]
         for file_path in text_files:
             content = file_path.read_text(encoding="utf-8")
-            self.assertNotIn("\u2014", content, f"Em dash found in {file_path.name}")
-            self.assertNotIn("\u2013", content, f"En dash found in {file_path.name}")
+            self.assertNotIn("\u2014", content, f"Em dash ditemukan di {file_path.name}")
+            self.assertNotIn("\u2013", content, f"En dash ditemukan di {file_path.name}")
 
     def test_app_style_markers(self):
         app_text = (BASE_DIR / "app.py").read_text(encoding="utf-8")
@@ -209,9 +225,12 @@ class PipelineTest(unittest.TestCase):
             ("#CBD5E1", "#1E293B"),
             ("#F8FAFC", "#1E293B"),
             ("#0F172A", "#F8FAFC"),
+            ("#0F172A", "#F1F5F9"),
             ("#0F172A", "#FFFFFF"),
             ("#334155", "#FFFFFF"),
             ("#475569", "#FFFFFF"),
+            ("#475569", "#F8FAFC"),
+            ("#475569", "#F1F5F9"),
             ("#1D4ED8", "#FFFFFF"),
             ("#1E3A8A", "#DBEAFE"),
             ("#0F172A", "#BFDBFE"),
@@ -219,7 +238,7 @@ class PipelineTest(unittest.TestCase):
             ("#B91C1C", "#FFFFFF"),
         ]
         for fg, bg in text_pairs:
-            self.assertGreaterEqual(_contrast_ratio(fg, bg), 4.5, f"Contrast failed for {fg} on {bg}")
+            self.assertGreaterEqual(_contrast_ratio(fg, bg), 4.5, f"Kontras gagal untuk {fg} di atas {bg}")
 
         self.assertGreaterEqual(_contrast_ratio("#64748B", "#FFFFFF"), 3.0)
 

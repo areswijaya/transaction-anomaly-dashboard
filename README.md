@@ -2,83 +2,70 @@
 
 [![Streamlit App](https://img.shields.io/badge/Streamlit_App-Live_Demo-FF4B4B?style=flat)](https://transaction-anomaly-dashboard-areswijaya.streamlit.app)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat)
-![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B?style=flat)
 ![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-ML-F7931E?style=flat)
 
-Proyek belajar saya untuk berlatih alur data science dari awal sampai tampil di web: membersihkan data, mengelompokkan nasabah, menandai transaksi yang tidak biasa, menguji seberapa kokoh hasilnya, lalu menyajikannya di dashboard interaktif.
+Proyek portofolio data science end-to-end pada 2.516 transaksi bank sintetis (dari 2.537 baris mentah): pembersihan data, segmentasi nasabah, deteksi anomali, uji stabilitas model, dan dashboard interaktif Streamlit.
 
-> **English summary:** A learning project on 2,516 **synthetic** bank transactions. K-Means groups customers into two segments (which mostly separate young/low-balance from older/high-balance customers), Isolation Forest flags unusual transactions, and a simple rule flags repeated login attempts. Stability checks (seeds, feature ablation, simple baselines, injected anomalies) are in the notebook. The data has no real fraud labels, so flagged transactions are candidates for review, not confirmed fraud.
+> **English summary:** End-to-end data science learning project on 2,516 synthetic US bank transactions. K-Means (k = 2) separates customers primarily by age and account balance, Isolation Forest (contamination = 0.05) flags unusual transaction behavior, and a separate rule checks repeated login attempts (LoginAttempts >= 3). Because the dataset has no ground-truth fraud labels, all flags serve as review candidates rather than confirmed fraud, and stability/ablation/injection checks are documented in the notebook.
 
-## Yang Saya Kerjakan
+## Metode
 
-1. **Membersihkan data**: membuang duplikat, mengisi nilai kosong (median untuk angka, modus untuk teks).
-2. **Segmentasi dengan K-Means** (k = 2, Silhouette Score 0.2634) pada 5 fitur perilaku. Nama segmen hanya memuat yang terukur, yaitu usia dan saldo:
-   - **Nasabah Muda Saldo Kecil** (34.30%): usia rata-rata sekitar 27 tahun, saldo rata-rata 1,584.53 USD, rasio transaksi terhadap saldo 0.47.
-   - **Nasabah Lebih Tua Saldo Besar** (65.70%): usia rata-rata sekitar 54 tahun, saldo rata-rata 6,955.81 USD, rasio 0.05.
-3. **Penanda anomali dengan Isolation Forest** pada 6 fitur (5 fitur perilaku + nominal per detik). Model diminta menandai sekitar 5% transaksi yang paling tidak biasa. Tiap transaksi diberi **skor persentil 0-100**: skor 97 berarti lebih tidak biasa daripada 97% data latih, dan ambang anomali jatuh di sekitar persentil 95.
-4. **Aturan risiko login**: `LoginAttempts >= 3` menyaring 93 transaksi (3.70%). Ini aturan sederhana, bukan hasil model.
-5. **Uji kekokohan** (notebook bagian 4.1 dan 5.1 sampai 5.4): ulang model dengan seed dan fitur berbeda, bandingkan dengan aturan satu fitur, dan suntikkan anomali buatan.
-6. **Dashboard Streamlit** dengan 5 tab (`Ringkasan`, `Segmen`, `Anomali & Login`, `Coba Transaksi`, `Catatan`), filter profesi/kanal/tipe/kota, grafik, tabel yang bisa diunduh, dan form untuk mencoba satu transaksi (dengan peringatan bila input di luar rentang data latih).
+1. **Pembersihan data**: hapus 21 baris duplikat dari 2.537 baris awal menjadi 2.516 transaksi, buang kolom identitas/IP/tanggal, dan isi nilai kosong (sekitar 1% per kolom) dengan median untuk numerik serta modus untuk teks.
+2. **Segmentasi K-Means** (`k = 2`, Silhouette Score `0.2634`) pada 5 fitur perilaku terstandarisasi (`TransactionAmount`, `CustomerAge`, `TransactionDuration`, `AccountBalance`, `Balance_Ratio`):
+   - **Nasabah Muda Saldo Kecil** (863 transaksi, 34.30%): rata-rata usia 27.30 tahun, saldo 1,584.53 USD, nominal 347.07 USD, `Balance_Ratio` 0.47.
+   - **Nasabah Lebih Tua Saldo Besar** (1,653 transaksi, 65.70%): rata-rata usia 53.71 tahun, saldo 6,955.81 USD, nominal 270.63 USD, `Balance_Ratio` 0.05.
+3. **Deteksi anomali Isolation Forest** (`n_estimators = 200`, `contamination = 0.05`) pada 6 fitur (5 fitur perilaku ditambah `Amount_Per_Second`). Model menandai 126 transaksi (5.01%) dan memberi skor persentil 0-100 terhadap data latih (ambang anomali pada persentil 94.99; dipilih menggantikan skala min-max yang terdistorsi satu outlier ekstrem).
+4. **Aturan risiko login**: `LoginAttempts >= 3` menyaring 93 transaksi (3.70%). Fitur `LoginAttempts` dipisahkan dari K-Means dan Isolation Forest agar sinyal akses akun tidak bercampur dengan pola transaksi.
+5. **Dashboard Streamlit (`app.py`)**: 5 tab (`Ringkasan`, `Segmen`, `Anomali & Login`, `Coba Transaksi`, `Catatan`), filter profesi/kanal/tipe/kota, ekspor CSV, dan simulasi satu transaksi dengan peringatan ekstrapolasi di luar rentang data latih.
 
-## Temuan dan Batasannya
+## Temuan Utama
 
-Semua angka dari 2,516 transaksi hasil pembersihan. Fitur yang melatih model ikut dipakai menjelaskan hasilnya, jadi bagian ini menggambarkan **karakter outlier model**, bukan pola fraud asli.
+Fitur penjelas ikut melatih model pada data tanpa label fraud, sehingga angka berikut menggambarkan karakter outlier model, bukan pola fraud dunia nyata.
 
-### Apa yang ditandai model
+### Karakter outlier model
 
-- **Nominal besar, rasio saldo tinggi, kecepatan tinggi:** rata-rata nominal transaksi anomali 1,019.27 USD (median 1,043.66 USD) dibanding 258.76 USD (median 199.38 USD) pada transaksi normal. Rata-rata `Balance_Ratio` 1.35 dibanding 0.14, dan 58.7% transaksi anomali (74 dari 126) punya `Balance_Ratio > 0.5`, dibanding 6.3% (150 dari 2,390) pada transaksi normal. Rata-rata `Amount_Per_Second` 19.33 dibanding 3.24 USD/detik.
-- **Bukan sekadar "nominal besar":** korelasi peringkat (Spearman) skor dengan nominal 0.42, dengan nominal per detik 0.38, dan dengan `Balance_Ratio` 0.31. Skor tidak berkorelasi dengan usia, saldo, durasi, dan login (di bawah 0.02).
+- **Nominal, rasio saldo, dan kecepatan tinggi**: rata-rata nominal anomali 1,019.27 USD (median 1,043.66 USD) dibanding 258.76 USD (median 199.38 USD) pada transaksi normal. Rata-rata `Balance_Ratio` 1.35 dibanding 0.14 (58.7% atau 74 dari 126 anomali memiliki `Balance_Ratio > 0.5`, dibanding 6.3% atau 150 dari 2,390 transaksi normal). Rata-rata `Amount_Per_Second` 19.33 dibanding 3.24 USD/detik.
+- **Kombinasi fitur, bukan satu variabel saja**: korelasi peringkat Spearman skor mentah tertinggi dengan nominal (`0.42`), `Amount_Per_Second` (`0.38`), dan `Balance_Ratio` (`0.31`), sementara usia, saldo, durasi, dan upaya login masing-masing di bawah `0.02`.
 
-### Selisih antar-segmen adalah efek definisi rasio
+### Efek definisi rasio antar-segmen
 
-Tingkat anomali segmen Muda 9.62% (83 dari 863) vs segmen Lebih Tua 2.60% (43 dari 1,653). Namun di dalam kelompok `Balance_Ratio` yang sama, selisih itu hilang: pada 20% rasio tertinggi, anomali 17.7% (Muda) vs 18.8% (Lebih Tua), dan pada 60% rasio terendah segmen Muda hampir tidak punya anomali. Jadi selisihnya muncul karena saldo kecil membuat rasio besar, bukan karena perilaku segmen.
+Tingkat anomali segmen Muda mencapai 9.62% (83/863) dibanding Lebih Tua 2.60% (43/1,653). Namun di dalam kelompok `Balance_Ratio` yang sama, selisih tersebut hilang: pada kuintil rasio tertinggi, proporsi anomali 17.7% (Muda) vs 18.8% (Lebih Tua), dan pada tiga kuintil terendah segmen Muda bernilai 0.0%. Perbedaan antar-segmen muncul karena saldo kecil memperbesar `Balance_Ratio`, bukan karena perilaku segmen yang berbeda.
 
-### Login dan anomali model hampir tidak berhubungan
+### Independensi aturan login
 
-Hanya 3 transaksi (0.12%) yang sekaligus ditandai Isolation Forest dan punya `LoginAttempts >= 3`. Kalau keduanya independen, irisan yang diharapkan 4.7, jadi dua mekanisme ini menyaring kandidat yang praktis berbeda. Sebaran `LoginAttempts` juga terlihat seperti hasil generator data: 2,396 transaksi bernilai 1, 27 bernilai 2, lalu tepat 31 transaksi masing-masing untuk nilai 3, 4, dan 5.
+Irisan antara Isolation Forest dan `LoginAttempts >= 3` hanya 3 transaksi (0.12%), mendekati ekspektasi acak jika independen (4.7 transaksi). Sebaran `LoginAttempts` juga menunjukkan pola generator data sintetis: 2,396 transaksi bernilai 1, 27 bernilai 2, serta tepat 31 transaksi masing-masing untuk nilai 3, 4, dan 5.
 
-### Seberapa stabil hasilnya
+### Uji stabilitas dan pembanding
 
 | Uji | Hasil |
 |---|---|
-| `contamination` 0.03 / 0.05 / 0.07 | 76 / 126 / 177 anomali. Himpunannya selalu bersarang (Jaccard 0.60 dan 0.71 hanya rasio jumlah), jadi ini menunjukkan jumlah anomali adalah **pilihan**, bukan kekokohan model |
-| 10 seed berbeda | Peringkat skor stabil (Spearman rata-rata 0.98), daftar 126 transaksi berubah sedikit (Jaccard rata-rata 0.86, rentang 0.79 sampai 0.90) |
-| Tanpa `Amount_Per_Second` atau tanpa `Balance_Ratio` | Jaccard 0.62: sekitar 40% daftar bergantung pada fitur turunan |
+| `contamination` 0.03 / 0.05 / 0.07 | 76 / 126 / 177 anomali; himpunan bersarang penuh (Jaccard 0.60 dan 0.71 murni rasio jumlah, menunjukkan jumlah anomali adalah pilihan parameter) |
+| 10 seed acak | Peringkat skor stabil (Spearman rata-rata 0.98); himpunan 126 anomali konsisten (Jaccard rata-rata 0.86, rentang 0.79 sampai 0.90) |
+| Tanpa `Amount_Per_Second` atau tanpa `Balance_Ratio` | Jaccard 0.62 (96 dari 126 transaksi tetap sama; 30 transaksi atau 23.8% berubah) |
 | Hanya nominal + saldo | Jaccard 0.33 |
-| 126 nilai terbesar satu fitur | Jaccard 0.44 (nominal), 0.32 (nominal per detik), 0.29 (`Balance_Ratio`): model menangkap kombinasi fitur, bukan satu fitur |
-| Anomali suntikan (2% transaksi, nominal x5) | Recall 54% (27 dari 50) untuk Isolation Forest, 56% untuk aturan "nominal terbesar", 16% untuk aturan "rasio terbesar". Pada skenario ini model **tidak lebih baik** dari aturan nominal sederhana |
+| 126 nilai tertinggi satu fitur | Jaccard 0.44 (nominal), 0.32 (`Amount_Per_Second`), 0.29 (`Balance_Ratio`); model menangkap interaksi multifitur |
+| Anomali suntikan (2% data = 50 transaksi, nominal x5) | Recall pada 5% teratas: Isolation Forest 54% (27/50), aturan nominal terbesar 56% (28/50), aturan rasio terbesar 16% (8/50); pada skenario lonjakan nominal tunggal, model tidak mengungguli aturan sederhana |
 
-### Seberapa kokoh segmentasinya
+### Kekokohan segmentasi K-Means
 
-K-Means dengan `log1p` menghasilkan pembagian yang mirip (ARI 0.76), begitu juga tanpa `Balance_Ratio` (ARI 0.78) dan hanya dengan usia + saldo (ARI 0.77, Silhouette 0.44). Artinya segmentasi ini pada dasarnya adalah usia dan saldo, dan `Balance_Ratio` (yang dihitung dari nominal dan saldo) tidak menambah banyak. Silhouette untuk k = 2 sampai 8 berkisar 0.23 sampai 0.26, jadi tidak ada struktur cluster yang tegas.
+Mengulang K-Means (`k = 2`) dengan transformasi `log1p` (ARI `0.76`, Silhouette `0.34`), tanpa `Balance_Ratio` (ARI `0.78`, Silhouette `0.25`), serta hanya usia + saldo (ARI `0.77`, Silhouette `0.44`) menghasilkan partisi serupa. Nilai Silhouette untuk `k = 2` sampai `8` berkisar `0.23` hingga `0.26`, menandakan batas cluster saling tumpang tindih dan didominasi usia serta saldo.
 
-### Contoh Urutan Tinjauan
+### Contoh urutan tinjauan kandidat
 
-Jika daftar kandidat di tab `Anomali & Login` dipakai untuk pemeriksaan manual, urutannya bisa dibuat seperti ini:
+Untuk demo triase di tab `Anomali & Login` (bukan prosedur operasional produksi):
 
-1. **Prioritas 1 (irisan keduanya, 3 transaksi):** cek transaksi yang sekaligus anomali perilaku dan punya `LoginAttempts >= 3`.
-2. **Prioritas 2 (risiko login saja, 90 transaksi):** fokus ke verifikasi akses dan upaya masuk berulang.
-3. **Prioritas 3 (anomali perilaku saja, 123 transaksi):** urutkan dari skor tertinggi, lalu periksa nominal besar dibanding saldo atau durasi singkat.
-
-Ini hanya contoh alur kerja untuk demo analisis, bukan prosedur operasional produksi.
-
-## Apa yang Saya Pelajari
-
-- Nilai Silhouette yang rendah (0.2634) berarti segmen saling tumpang tindih. Saya melaporkannya apa adanya, dan nama segmen sengaja hanya memuat usia dan saldo karena hanya itu yang membedakan segmen.
-- Tanpa label fraud asli, hasil model tidak bisa dihitung akurasinya. "Anomali" di sini hanya berarti "tidak biasa". Satu-satunya angka kinerja yang bisa saya dapat adalah dari anomali suntikan, dan itu hanya satu skenario sintetis.
-- Mengubah `contamination` tidak menguji kekokohan model, karena hanya menggeser ambang pada skor yang sama. Uji yang bermakna adalah seed, fitur, dan pembanding sederhana.
-- Skor min-max 0-100 bergantung pada satu transaksi paling ekstrem (ambangnya jatuh di sekitar 51 padahal hanya 5% yang ditandai). Skor persentil lebih mudah dibaca.
-- Selisih antar-kelompok perlu dicek dengan mengendalikan fitur yang dipakai membentuk skor, sebelum dibaca sebagai perilaku.
-- Fitur yang saling menumpuk sebaiknya dipisah. `LoginAttempts` tidak dipakai di K-Means maupun Isolation Forest, supaya aturan login berdiri sendiri.
+1. **Prioritas 1 (3 transaksi)**: irisan anomali Isolation Forest dan `LoginAttempts >= 3`.
+2. **Prioritas 2 (90 transaksi)**: risiko login saja (`LoginAttempts >= 3`), fokus pada verifikasi akses akun.
+3. **Prioritas 3 (123 transaksi)**: anomali perilaku saja, urutkan dari skor persentil tertinggi lalu periksa rasio terhadap saldo dan kecepatan transaksi.
 
 ## Keterbatasan
 
-- Data sintetis (dataset latihan Dicoding, adaptasi Kaggle *Bank Transaction Dataset for Fraud Detection*), transaksi kota-kota Amerika Serikat dalam USD.
-- Tidak ada label fraud asli, jadi precision dan recall tidak bisa dihitung. Recall anomali suntikan hanya gambaran kasar.
-- Dua segmen pada dasarnya memisahkan nasabah muda bersaldo kecil dan nasabah lebih tua bersaldo besar. Ide tindakan per segmen di dashboard adalah hipotesis yang belum diuji.
-- Jumlah anomali mengikuti pilihan `contamination = 0.05`, bukan temuan dari data.
+- **Data sintetis tanpa label fraud asli**: berasal dari dataset latihan Dicoding (adaptasi Kaggle *Bank Transaction Dataset for Fraud Detection*, transaksi kota AS dalam USD), sehingga precision dan recall fraud nyata tidak dapat diukur.
+- **Segmen tumpang tindih**: Silhouette Score `0.2634` menunjukkan pemisahan lemah; rekomendasi aksi per segmen di dashboard bersifat hipotesis yang belum diuji.
+- **Ambang ditentukan parameter**: proporsi 5% anomali mengikuti `contamination = 0.05`, bukan ambang alami dari data.
+- **Evaluasi suntikan terbatas**: recall 54% hanya menguji satu skenario sintetis (lonjakan nominal 5x), bukan variasi pola fraud nyata.
 
-## Struktur Folder
+## Struktur Proyek
 
 ```text
 transaction-anomaly-dashboard/
@@ -113,17 +100,12 @@ pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-Dashboard terbuka di `http://localhost:8501`.
+Aplikasi terbuka di `http://localhost:8501`.
 
-Semua file di `data/` (selain `raw.xlsx`) dan `models/` dihasilkan oleh `notebooks/clustering.ipynb`. Jalankan notebook dari atas ke bawah (*Run All*) untuk membuatnya ulang. Notebook di repo disimpan **tanpa output** (dicek oleh test), jadi bersihkan output sebelum commit. Jika ingin menjalankan ulang notebook, pasang paket tambahannya terlebih dulu:
+Seluruh file di `data/` (kecuali `raw.xlsx`) dan `models/` dihasilkan oleh `notebooks/clustering.ipynb` saat dijalankan dari atas ke bawah (*Run All*). Notebook disimpan tanpa output cell agar lolos pemeriksaan test kebersihan repositori. Untuk menjalankan ulang notebook dan suite pengujian:
 
 ```bash
 pip install matplotlib seaborn openpyxl jupyter
-```
-
-Pengujian sederhana (menjalankan test pada file hasil notebook, jadi jalankan notebook dulu):
-
-```bash
 python -m unittest discover -s tests -v
 ```
 
